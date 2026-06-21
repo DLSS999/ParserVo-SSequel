@@ -7,67 +7,74 @@ export type PricingInput = {
   markupPercent?: number;
   roundingRule?: string;
   compareAtEnabled?: boolean;
+  compareAtFormula?: string;
 };
 
 export function toDecimalNumber(value: unknown, fallback = 0) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
-
   const raw = String(value ?? "")
     .trim()
     .replace(/\s+/g, "")
     .replace(/,/g, ".")
     .replace(/[^\d.-]/g, "");
-
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function roundUp(value: number, step: number) {
-  if (!Number.isFinite(value) || value <= 0) return 0;
   return Math.ceil(value / step) * step;
 }
 
-function roundMoney(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+function roundPrice(value: number, rule: string) {
+  if (rule === "round_to_5") return roundUp(value, 5);
+  if (rule === "round_to_10") return roundUp(value, 10);
+  if (rule === "round_to_50") return roundUp(value, 50);
+  if (rule === "round_to_100") return roundUp(value, 100);
+  if (rule === "round_to_500") return roundUp(value, 500);
+  return Math.round(value);
 }
 
 function getCurrencyRate(currency: string, eurRate: number, plnRate: number) {
   const normalized = String(currency || "").toUpperCase().trim();
-  if (normalized === "EUR" || normalized === "€") return toDecimalNumber(eurRate, 45);
-  if (normalized === "PLN" || normalized === "ZŁ" || normalized === "ZL") return toDecimalNumber(plnRate, 12.5);
+  const eur = toDecimalNumber(eurRate, 45);
+  const pln = toDecimalNumber(plnRate, 12.19);
+  if (normalized === "EUR") return eur;
+  if (normalized === "PLN" || normalized === "ZL") return pln;
   return 1;
 }
 
-function getCinqCoefficientByUahCost(costPriceUah: number) {
-  if (costPriceUah <= 800) return 2.75;
-  if (costPriceUah <= 1200) return 2.3;
-  if (costPriceUah <= 1800) return 1.75;
-  if (costPriceUah <= 2500) return 1.5;
-  if (costPriceUah <= 5000) return 1.4;
-  if (costPriceUah <= 10000) return 1.35;
-  if (costPriceUah <= 30000) return 1.3;
-  return 1.3;
+function calculateCinqSalePrice(costPriceUah: number, roundingRule: string) {
+  let fixedProfit = 5000;
+  if (costPriceUah > 50000 && costPriceUah <= 100000) fixedProfit = 10000;
+  if (costPriceUah > 100000) fixedProfit = 20000;
+  return roundPrice((costPriceUah + fixedProfit) * 1.05, roundingRule);
+}
+
+function calculateCinqCompareAtPrice(costPriceUah: number, salePriceUah: number, roundingRule: string) {
+  const compareAt = costPriceUah * (73500 / 35340);
+  const rounded = roundPrice(compareAt, roundingRule);
+  return Math.max(rounded, salePriceUah);
 }
 
 export function calculatePricing(input: PricingInput) {
   const supplierPrice = toDecimalNumber(input.supplierPrice, 0);
   const exchangeRateUsed = getCurrencyRate(input.currency, input.eurRate, input.plnRate);
-  const costPriceUah = roundMoney(supplierPrice * exchangeRateUsed);
-  const salePriceUah = roundUp(costPriceUah * getCinqCoefficientByUahCost(costPriceUah), 10);
-
-  const supplierOldPrice = toDecimalNumber(input.supplierOldPrice, 0);
-  const oldCostPriceUah = roundMoney(supplierOldPrice * exchangeRateUsed);
-  const compareCandidate = roundUp(oldCostPriceUah * getCinqCoefficientByUahCost(oldCostPriceUah), 10);
-  const compareAtPriceUah = input.compareAtEnabled !== false && supplierOldPrice > supplierPrice && compareCandidate > salePriceUah
-    ? compareCandidate
+  const roundingRule = input.roundingRule || "round_to_5";
+  const costPriceUah = roundPrice(supplierPrice * exchangeRateUsed, roundingRule);
+  const salePriceUah = calculateCinqSalePrice(costPriceUah, roundingRule);
+  const compareAtPriceUah = input.compareAtEnabled !== false
+    ? calculateCinqCompareAtPrice(costPriceUah, salePriceUah, roundingRule)
     : null;
-
   return {
     exchangeRateUsed,
     costPriceUah,
     salePriceUah,
     compareAtPriceUah,
+    supplierPrice,
+    supplierOldPrice: input.supplierOldPrice ? toDecimalNumber(input.supplierOldPrice, 0) : null,
+    profitUah: salePriceUah - costPriceUah,
+    discountAmountUah: compareAtPriceUah ? compareAtPriceUah - salePriceUah : null,
+    roundingRule,
   };
 }
 
