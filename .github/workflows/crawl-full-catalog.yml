@@ -1,0 +1,63 @@
+name: Crawl NET-A-PORTER and MR PORTER
+
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: "all or category id (nap-clothing, mrp-shoes, etc.)"
+        required: true
+        default: "all"
+        type: string
+      max_products:
+        description: "0 = no limit; use 5 for first test"
+        required: true
+        default: "0"
+        type: string
+  schedule:
+    - cron: "20 2 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parservo-full-catalog
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      SUPABASE_URL: https://cuzjuykyelzrvxxbcjry.supabase.co
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      CRAWL_CATEGORY: ${{ inputs.category || 'all' }}
+      MAX_PRODUCTS: ${{ inputs.max_products || '0' }}
+      CRAWL_CONCURRENCY: "4"
+      EUR_RATE: ${{ vars.EUR_RATE || '45' }}
+      PLN_RATE: ${{ vars.PLN_RATE || '12.19' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify required secret
+        run: |
+          if [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "SUPABASE_SECRET_KEY repository secret is missing"
+            exit 1
+          fi
+
+      - name: Crawl filtered catalog
+        run: npm run crawl:catalog
