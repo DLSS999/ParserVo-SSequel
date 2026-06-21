@@ -28,6 +28,7 @@ type ProductRow = {
     cost_uah?: number | string | null;
     available?: boolean | null;
     position?: number | null;
+    supplier_status?: string | null;
   }>;
   parservo_media?: Array<{
     media_type: "image" | "video";
@@ -51,26 +52,27 @@ export type SupabaseCatalogResult = {
 
 export async function loadSupabaseCatalog(): Promise<SupabaseCatalogResult> {
   const url = process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
-  const key = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
+  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
 
   if (!key) {
     return {
       products: [],
       connected: false,
-      error: "SUPABASE_PUBLISHABLE_KEY is not configured in Vercel.",
+      error: "Supabase API key is not configured.",
     };
   }
 
   const select = "*,parservo_variants(*),parservo_media(*)";
   const endpoint = `${url}/rest/v1/parservo_products?select=${encodeURIComponent(select)}&order=created_at.asc`;
+  const requestHeaders: Record<string, string> = {
+    apikey: key,
+    Accept: "application/json",
+  };
+  if (key.startsWith("eyJ")) requestHeaders.Authorization = `Bearer ${key}`;
 
   try {
     const response = await fetch(endpoint, {
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        Accept: "application/json",
-      },
+      headers: requestHeaders,
       cache: "no-store",
     });
 
