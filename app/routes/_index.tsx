@@ -1,7 +1,8 @@
 import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  return redirect("/app");
+  const url = new URL(request.url);
+  return redirect(`/app${url.search}`);
 }
 
 export default function Index() {
