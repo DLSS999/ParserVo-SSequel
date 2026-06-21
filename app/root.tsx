@@ -8,20 +8,17 @@ import {
 } from "@remix-run/react";
 import { AppProvider } from "@shopify/polaris";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css";
+import dashboardStyles from "./styles/dashboard.css";
 
 const enTranslations = {
   Polaris: {
-    Common: {
-      checkbox: "checkbox",
-    },
+    Common: { checkbox: "checkbox" },
     ResourceList: {
       sortingLabel: "Sort by",
       defaultItemSingular: "item",
       defaultItemPlural: "items",
       showing: "Showing {itemsCount} {resource}",
-      Item: {
-        viewItem: "View details for {itemName}",
-      },
+      Item: { viewItem: "View details for {itemName}" },
       selected: "{selectedItemsCount} selected",
       allItemsSelected: "All {itemsLength}+ {resourceName} are selected",
       selectAllItems: "Select all {itemsLength}+ {resourceName}",
@@ -35,6 +32,7 @@ const enTranslations = {
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: polarisStyles },
+  { rel: "stylesheet", href: dashboardStyles },
 ];
 
 export const meta: MetaFunction = () => [
@@ -45,10 +43,7 @@ export const meta: MetaFunction = () => [
 export default function App() {
   return (
     <html lang="en">
-      <head>
-        <Meta />
-        <Links />
-      </head>
+      <head><Meta /><Links /></head>
       <body>
         <AppProvider i18n={enTranslations}>
           <Outlet />
@@ -63,11 +58,7 @@ export default function App() {
 export function ErrorBoundary() {
   return (
     <html lang="en">
-      <head>
-        <title>ParserVo Error</title>
-        <Meta />
-        <Links />
-      </head>
+      <head><title>ParserVo Error</title><Meta /><Links /></head>
       <body>
         <AppProvider i18n={enTranslations}>
           <div style={{ padding: 24 }}>
