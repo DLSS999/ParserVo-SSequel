@@ -2,18 +2,19 @@
 
 client_id = "4b8c86a0f4b6c7c41419ebc378b0fef2"
 name = "ParserVO SS"
-application_url = "https://shopify.dev/apps/default-app-home"
+application_url = "https://parser-vo-s-sequel.vercel.app"
 embedded = true
 
 [webhooks]
-api_version = "2026-07"
+api_version = "2026-04"
 
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = ""
+scopes = "read_products,write_products,read_inventory,write_inventory,read_locations"
 
 [auth]
-redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
+redirect_urls = [
+  "https://parser-vo-s-sequel.vercel.app/auth/callback"
+]
 
 [build]
 include_config_on_deploy = true
