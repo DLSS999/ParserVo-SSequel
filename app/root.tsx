@@ -8,7 +8,30 @@ import {
 } from "@remix-run/react";
 import { AppProvider } from "@shopify/polaris";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css";
-import enTranslations from "@shopify/polaris/locales/en.json";
+
+const enTranslations = {
+  Polaris: {
+    Common: {
+      checkbox: "checkbox",
+    },
+    ResourceList: {
+      sortingLabel: "Sort by",
+      defaultItemSingular: "item",
+      defaultItemPlural: "items",
+      showing: "Showing {itemsCount} {resource}",
+      Item: {
+        viewItem: "View details for {itemName}",
+      },
+      selected: "{selectedItemsCount} selected",
+      allItemsSelected: "All {itemsLength}+ {resourceName} are selected",
+      selectAllItems: "Select all {itemsLength}+ {resourceName}",
+      emptySearchResultTitle: "No results found",
+      emptySearchResultDescription: "Try changing the filters or search term",
+      filteringLabel: "Filter",
+      search: "Search",
+    },
+  },
+};
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: polarisStyles },
