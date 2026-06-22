@@ -122,6 +122,14 @@ export async function action({ request }: ActionFunctionArgs) {
         ...patch,
         status: "RUNNING",
       });
+      await recordBrowserHeartbeat({
+        shopDomain: shop,
+        agentId,
+        version: payload.version,
+        status: "BUSY",
+        message: payload.message || "Processing catalog",
+        currentJobId: payload.jobId,
+      });
       return response({ ok: true });
     }
 
