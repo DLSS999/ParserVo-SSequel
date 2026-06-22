@@ -411,7 +411,7 @@ async function parsePage(page: Page, url: string, config: CrawlCategory): Promis
       composition: compositionLines.join("; "),
       sizeRows,
       images: [
-        ...(Array.isArray(productLd.image) ? productLd.image.map((imageUrl: string) => ({ url: imageUrl, alt: "" })) : productLd.image ? [{ url: productLd.image, alt: "" }] : []),
+        ...(Array.isArray(productLd.image) ? productLd.image.map((url: string) => ({ url, alt: "" })) : productLd.image ? [{ url: productLd.image, alt: "" }] : []),
         { url: meta("og:image"), alt: "" },
         ...imageCandidates,
       ],
@@ -431,8 +431,7 @@ async function parsePage(page: Page, url: string, config: CrawlCategory): Promis
   if (!supplierPrice || supplierPrice > 2000) throw new Error(`Price outside filter: ${supplierPrice}`);
   const compareAtPrice = parseMoney(raw.compareAt) || null;
   const variants = variantsFromRows(raw.sizeRows, config);
-  if (!variants.length) throw new Error(`No size or availability information found for ${title}`);
-
+  if (!variants.length) throw new Error("No product variants detected");
   const productCode = new URL(url).pathname.split("/").filter(Boolean).pop() || slug(title);
   const pathParts = new URL(url).pathname.split("/").filter(Boolean);
   const productSlug = pathParts[pathParts.length - 2] || slug(title);
@@ -585,11 +584,23 @@ async function main() {
   const selected = selectCategories(process.env.CRAWL_CATEGORY || process.argv[2] || "all");
   if (!selected.length) throw new Error("No crawl categories selected.");
 
-  const browser = await chromium.launch({ headless: true });
+  const headless = String(process.env.CRAWL_HEADLESS ?? "true").toLowerCase() !== "false";
+  const channel = process.env.CRAWL_BROWSER_CHANNEL?.trim();
+  const proxyServer = process.env.CRAWL_PROXY_SERVER?.trim();
+  const browser = await chromium.launch({
+    headless,
+    ...(channel ? { channel } : {}),
+    ...(proxyServer ? {
+      proxy: {
+        server: proxyServer,
+        username: process.env.CRAWL_PROXY_USERNAME,
+        password: process.env.CRAWL_PROXY_PASSWORD,
+      },
+    } : {}),
+  });
   const context = await browser.newContext({
     locale: "en-GB",
     viewport: { width: 1440, height: 1200 },
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     extraHTTPHeaders: {
       "Accept-Language": "en-GB,en;q=0.9",
     },
