@@ -41,10 +41,48 @@ export type CrawledProduct = {
   payload?: unknown;
 };
 
+function jwtRole(key: string) {
+  try {
+    const payload = key.split(".")[1];
+    if (!payload) return null;
+    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))?.role || null;
+  } catch {
+    return null;
+  }
+}
+
+function isElevatedKey(key: string) {
+  if (key.startsWith("sb_secret_")) return true;
+  if (key.startsWith("eyJ") && jwtRole(key) === "service_role") return true;
+  return false;
+}
+
 function config() {
   const url = process.env.SUPABASE_URL || DEFAULT_URL;
-  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!key) throw new Error("SUPABASE_SECRET_KEY is required for crawler writes.");
+  const candidates = [
+    process.env.SUPABASE_ADMIN_KEY,
+    process.env.SUPABASE_SECRET_KEY,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+  ].filter((value): value is string => Boolean(value));
+
+  const key = candidates.find(isElevatedKey);
+  if (!key) {
+    const detected = candidates[0] || "missing";
+    const kind = detected.startsWith("sb_publishable_")
+      ? "publishable key"
+      : detected.startsWith("eyJ") && jwtRole(detected) === "anon"
+        ? "legacy anon key"
+        : detected === "missing"
+          ? "missing key"
+          : "unsupported key";
+
+    throw new Error(
+      `Crawler requires an elevated Supabase key. Detected ${kind}. ` +
+      `Use sb_secret_... from Settings > API Keys > Secret keys, ` +
+      `or the legacy service_role JWT from Legacy API Keys.`,
+    );
+  }
+
   return { url, key };
 }
 
