@@ -2,7 +2,12 @@ import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-r
 import { Form, useActionData, useLoaderData, useRevalidator } from "@remix-run/react";
 import { useEffect } from "react";
 import { authenticate } from "../shopify.server";
-import { cancelCrawlJob, enqueueCrawlJob, listCrawlJobs } from "../services/crawl-jobs.server";
+import {
+  cancelCrawlJob,
+  enqueueCrawlJob,
+  listCrawlJobs,
+  listParserVoAgents,
+} from "../services/crawl-jobs.server";
 
 const categories = [
   { id: "all", source: "Оба сайта", category: "Весь каталог", expected: 2667 },
@@ -33,17 +38,35 @@ function statusClass(status: string) {
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   let jobs = [];
+  let agents = [];
   let queueReady = true;
   let queueError: string | null = null;
 
   try {
-    jobs = await listCrawlJobs(session.shop, 30);
+    [jobs, agents] = await Promise.all([
+      listCrawlJobs(session.shop, 30),
+      listParserVoAgents(session.shop),
+    ]);
   } catch (error) {
     queueReady = false;
     queueError = error instanceof Error ? error.message : "Queue error";
   }
 
-  return json({ shop: session.shop, jobs, queueReady, queueError, categories });
+  const now = Date.now();
+  const onlineAgent = agents.find((agent) => {
+    const lastSeen = new Date(agent.last_seen_at).getTime();
+    return Number.isFinite(lastSeen) && now - lastSeen < 30000;
+  }) || null;
+
+  return json({
+    shop: session.shop,
+    jobs,
+    agents,
+    onlineAgent,
+    queueReady,
+    queueError,
+    categories,
+  });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -85,10 +108,12 @@ export default function CrawlerPage() {
   const active = data.jobs.some((job) => job.status === "QUEUED" || job.status === "RUNNING");
 
   useEffect(() => {
-    if (!active) return;
+    if (!active && data.onlineAgent) return;
     const timer = window.setInterval(() => revalidator.revalidate(), 5000);
     return () => window.clearInterval(timer);
-  }, [active, revalidator]);
+  }, [active, data.onlineAgent, revalidator]);
+
+  const agentOnline = Boolean(data.onlineAgent);
 
   return (
     <main className="pv-stack">
@@ -97,20 +122,32 @@ export default function CrawlerPage() {
           <h1>ParserVo Crawler</h1>
           <p>Управление парсингом только из Shopify-приложения. Магазин: {data.shop}</p>
         </div>
-        <span className={`pv-pill ${data.queueReady ? "pv-pill-green" : "pv-pill-red"}`}>
-          {data.queueReady ? "Очередь подключена" : "Очередь не настроена"}
-        </span>
+        <div className="pv-header">
+          <span className={`pv-pill ${data.queueReady ? "pv-pill-green" : "pv-pill-red"}`}>
+            {data.queueReady ? "Очередь подключена" : "Очередь не настроена"}
+          </span>
+          <span className={`pv-pill ${agentOnline ? "pv-pill-green" : "pv-pill-red"}`}>
+            {agentOnline ? `Agent онлайн: ${data.onlineAgent?.hostname || data.onlineAgent?.agent_id}` : "Agent офлайн"}
+          </span>
+        </div>
       </div>
 
       {actionData?.message ? (
         <div className={`pv-alert ${actionData.ok ? "pv-alert-success" : "pv-alert-error"}`}>{actionData.message}</div>
       ) : null}
       {data.queueError ? <div className="pv-alert pv-alert-error">{data.queueError}</div> : null}
+      {!agentOnline ? (
+        <div className="pv-alert pv-alert-error">
+          Windows Agent не отправляет heartbeat. Задания останутся QUEUED, пока Agent не запущен.
+        </div>
+      ) : null}
 
       <section className="pv-card">
         <div className="pv-header">
           <h2 className="pv-title">Запустить парсинг</h2>
-          <span className="pv-pill pv-pill-green">после установки Agent</span>
+          <span className={`pv-pill ${agentOnline ? "pv-pill-green" : "pv-pill-red"}`}>
+            {agentOnline ? data.onlineAgent?.message || "Agent готов" : "сначала запусти Agent"}
+          </span>
         </div>
         <p className="pv-note">
           Кнопка создаёт задание. Фоновый ParserVo Agent на Windows забирает его, открывает локальный Chrome, сохраняет товары в Supabase и затем синхронизирует Shopify.
@@ -129,7 +166,7 @@ export default function CrawlerPage() {
                       <input type="hidden" name="intent" value="enqueue" />
                       <input type="hidden" name="categoryId" value={category.id} />
                       <input name="maxProducts" type="number" min="0" step="1" defaultValue={category.id === "all" ? 0 : 5} title="0 = без лимита" />
-                      <button className="pv-button pv-button-primary" type="submit" disabled={!data.queueReady}>
+                      <button className="pv-button pv-button-primary" type="submit" disabled={!data.queueReady || !agentOnline}>
                         {category.id === "all" ? "Скачать весь каталог" : "Запустить"}
                       </button>
                     </Form>
