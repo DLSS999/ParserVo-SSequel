@@ -2,6 +2,7 @@ import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-r
 import { Form, useActionData, useLoaderData, useRevalidator } from "@remix-run/react";
 import { useEffect } from "react";
 import { authenticate } from "../shopify.server";
+import { browserCaptureKey } from "../services/browser-capture.server";
 import {
   cancelCrawlJob,
   enqueueCrawlJob,
@@ -35,6 +36,12 @@ function statusClass(status: string) {
   return "";
 }
 
+function progress(done?: number | null, total?: number | null) {
+  const safeDone = Number(done || 0);
+  const safeTotal = Number(total || 0);
+  return safeTotal > 0 ? `${safeDone} / ${safeTotal}` : String(safeDone);
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   let jobs = [];
@@ -55,11 +62,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const now = Date.now();
   const onlineAgent = agents.find((agent) => {
     const lastSeen = new Date(agent.last_seen_at).getTime();
-    return Number.isFinite(lastSeen) && now - lastSeen < 30000;
+    return Number.isFinite(lastSeen) && now - lastSeen < 45000;
   }) || null;
 
   return json({
     shop: session.shop,
+    apiBaseUrl: process.env.SHOPIFY_APP_URL || new URL(request.url).origin,
+    captureToken: browserCaptureKey(session.shop),
     jobs,
     agents,
     onlineAgent,
@@ -93,7 +102,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
     return json({
       ok: true,
-      message: `Задание ${categoryId} добавлено в очередь. Agent ID появится после запуска.`,
+      message: `Задание ${categoryId} добавлено в очередь Chrome Capture.`,
       jobId: job.id,
     });
   } catch (error) {
@@ -108,26 +117,25 @@ export default function CrawlerPage() {
   const active = data.jobs.some((job) => job.status === "QUEUED" || job.status === "RUNNING");
 
   useEffect(() => {
-    if (!active && data.onlineAgent) return;
-    const timer = window.setInterval(() => revalidator.revalidate(), 5000);
+    const timer = window.setInterval(() => revalidator.revalidate(), active ? 5000 : 15000);
     return () => window.clearInterval(timer);
-  }, [active, data.onlineAgent, revalidator]);
+  }, [active, revalidator]);
 
-  const agentOnline = Boolean(data.onlineAgent);
+  const extensionOnline = Boolean(data.onlineAgent);
 
   return (
     <main className="pv-stack">
       <div className="pv-page-header">
         <div>
-          <h1>ParserVo Crawler</h1>
-          <p>Управление парсингом только из Shopify-приложения. Магазин: {data.shop}</p>
+          <h1>ParserVo NET-A-PORTER / MR PORTER Capture</h1>
+          <p>После одноразовой установки расширения все запуски выполняются только здесь.</p>
         </div>
         <div className="pv-header">
           <span className={`pv-pill ${data.queueReady ? "pv-pill-green" : "pv-pill-red"}`}>
             {data.queueReady ? "Очередь подключена" : "Очередь не настроена"}
           </span>
-          <span className={`pv-pill ${agentOnline ? "pv-pill-green" : "pv-pill-red"}`}>
-            {agentOnline ? `Agent онлайн: ${data.onlineAgent?.hostname || data.onlineAgent?.agent_id}` : "Agent офлайн"}
+          <span className={`pv-pill ${extensionOnline ? "pv-pill-green" : "pv-pill-red"}`}>
+            {extensionOnline ? `Chrome Capture онлайн: ${data.onlineAgent?.agent_id}` : "Chrome Capture офлайн"}
           </span>
         </div>
       </div>
@@ -136,21 +144,43 @@ export default function CrawlerPage() {
         <div className={`pv-alert ${actionData.ok ? "pv-alert-success" : "pv-alert-error"}`}>{actionData.message}</div>
       ) : null}
       {data.queueError ? <div className="pv-alert pv-alert-error">{data.queueError}</div> : null}
-      {!agentOnline ? (
+
+      <section className="pv-card">
+        <div className="pv-header">
+          <h2 className="pv-title">Настройка расширения Chrome</h2>
+          <span className={`pv-pill ${extensionOnline ? "pv-pill-green" : "pv-pill-red"}`}>
+            {extensionOnline ? data.onlineAgent?.message || "Расширение готово" : "вставь настройки и нажми Test API"}
+          </span>
+        </div>
+        <p className="pv-note">
+          Установи ParserVo YNAP Capture через chrome://extensions, затем скопируй эти три значения в popup расширения. Supabase Secret Key расширению не нужен.
+        </p>
+        <div className="pv-settings-grid">
+          <label><span>API Base URL</span><input readOnly value={data.apiBaseUrl} /></label>
+          <label><span>Shop</span><input readOnly value={data.shop} /></label>
+          <label><span>Browser capture token</span><input readOnly value={data.captureToken} /></label>
+          <div className="pv-metric">
+            <div className="pv-label">Последний heartbeat</div>
+            <div className="pv-value">{data.onlineAgent ? dateTime(data.onlineAgent.last_seen_at) : "нет"}</div>
+          </div>
+        </div>
+      </section>
+
+      {!extensionOnline ? (
         <div className="pv-alert pv-alert-error">
-          Windows Agent не отправляет heartbeat. Задания останутся QUEUED, пока Agent не запущен.
+          Расширение Chrome не подключено. Очередь принимает задания, но они останутся QUEUED до успешного Test API в расширении.
         </div>
       ) : null}
 
       <section className="pv-card">
         <div className="pv-header">
           <h2 className="pv-title">Запустить парсинг</h2>
-          <span className={`pv-pill ${agentOnline ? "pv-pill-green" : "pv-pill-red"}`}>
-            {agentOnline ? data.onlineAgent?.message || "Agent готов" : "сначала запусти Agent"}
+          <span className={`pv-pill ${extensionOnline ? "pv-pill-green" : "pv-pill-red"}`}>
+            {extensionOnline ? "готово" : "ожидание расширения"}
           </span>
         </div>
         <p className="pv-note">
-          Кнопка создаёт задание. Фоновый ParserVo Agent на Windows забирает его, открывает локальный Chrome, сохраняет товары в Supabase и затем синхронизирует Shopify.
+          Chrome Capture открывает страницы через твой обычный Chrome, сохраняет до 5 фото, размеры и цены, а затем автоматически создаёт или обновляет товар Shopify.
         </p>
         <div className="pv-table-wrap">
           <table className="pv-table">
@@ -166,7 +196,7 @@ export default function CrawlerPage() {
                       <input type="hidden" name="intent" value="enqueue" />
                       <input type="hidden" name="categoryId" value={category.id} />
                       <input name="maxProducts" type="number" min="0" step="1" defaultValue={category.id === "all" ? 0 : 5} title="0 = без лимита" />
-                      <button className="pv-button pv-button-primary" type="submit" disabled={!data.queueReady || !agentOnline}>
+                      <button className="pv-button pv-button-primary" type="submit" disabled={!data.queueReady || !extensionOnline}>
                         {category.id === "all" ? "Скачать весь каталог" : "Запустить"}
                       </button>
                     </Form>
@@ -186,15 +216,17 @@ export default function CrawlerPage() {
         </div>
         <div className="pv-table-wrap">
           <table className="pv-table">
-            <thead><tr><th>Время</th><th>Категория</th><th>Лимит</th><th>Статус</th><th>Agent</th><th>Сообщение</th><th></th></tr></thead>
+            <thead><tr><th>Время</th><th>Категория</th><th>Статус</th><th>Страницы</th><th>Ссылки</th><th>Товары</th><th>Ошибки</th><th>Сообщение</th><th></th></tr></thead>
             <tbody>
               {data.jobs.length ? data.jobs.map((job) => (
                 <tr key={job.id}>
                   <td>{dateTime(job.requested_at)}</td>
                   <td>{job.category_id}</td>
-                  <td>{job.max_products || "все"}</td>
                   <td><span className={`pv-pill ${statusClass(job.status)}`}>{job.status}</span></td>
-                  <td>{job.agent_id || "ожидание"}</td>
+                  <td>{progress(job.pages_done, job.pages_total)}</td>
+                  <td>{job.links_found || 0}</td>
+                  <td>{progress(job.products_done, job.products_total)}</td>
+                  <td>{job.products_failed || 0}</td>
                   <td>{job.message || "—"}</td>
                   <td>
                     {job.status === "QUEUED" ? (
@@ -207,7 +239,7 @@ export default function CrawlerPage() {
                   </td>
                 </tr>
               )) : (
-                <tr><td colSpan={7}>Заданий ещё нет.</td></tr>
+                <tr><td colSpan={9}>Заданий ещё нет.</td></tr>
               )}
             </tbody>
           </table>
