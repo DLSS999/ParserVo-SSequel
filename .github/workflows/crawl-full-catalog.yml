@@ -1,6 +1,13 @@
 name: Crawl NET-A-PORTER and MR PORTER
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/crawl-ynap.ts"
+      - "scripts/ynap-config.ts"
+      - "scripts/supabase-catalog-writer.ts"
+      - ".github/workflows/crawl-full-catalog.yml"
   workflow_dispatch:
     inputs:
       category:
@@ -30,8 +37,8 @@ jobs:
     env:
       SUPABASE_URL: https://cuzjuykyelzrvxxbcjry.supabase.co
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-      CRAWL_CATEGORY: ${{ inputs.category || 'all' }}
-      MAX_PRODUCTS: ${{ inputs.max_products || '0' }}
+      CRAWL_CATEGORY: ${{ github.event_name == 'workflow_dispatch' && inputs.category || 'nap-clothing' }}
+      MAX_PRODUCTS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_products || '5' }}
       CRAWL_CONCURRENCY: "4"
       EUR_RATE: ${{ vars.EUR_RATE || '45' }}
       PLN_RATE: ${{ vars.PLN_RATE || '12.19' }}
