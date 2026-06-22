@@ -1,13 +1,6 @@
-name: Crawl NET-A-PORTER and MR PORTER
+name: Crawl NET-A-PORTER and MR PORTER (local runner)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "scripts/crawl-ynap.ts"
-      - "scripts/ynap-config.ts"
-      - "scripts/supabase-catalog-writer.ts"
-      - ".github/workflows/crawl-full-catalog.yml"
   workflow_dispatch:
     inputs:
       category:
@@ -20,26 +13,26 @@ on:
         required: true
         default: "0"
         type: string
-  schedule:
-    - cron: "20 2 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: parservo-full-catalog
+  group: parservo-full-catalog-local
   cancel-in-progress: false
 
 jobs:
   crawl:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 720
     env:
       SUPABASE_URL: https://cuzjuykyelzrvxxbcjry.supabase.co
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-      CRAWL_CATEGORY: ${{ github.event_name == 'workflow_dispatch' && inputs.category || 'nap-clothing' }}
-      MAX_PRODUCTS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_products || '5' }}
-      CRAWL_CONCURRENCY: "4"
+      CRAWL_CATEGORY: ${{ inputs.category }}
+      MAX_PRODUCTS: ${{ inputs.max_products }}
+      CRAWL_CONCURRENCY: "3"
+      CRAWL_HEADLESS: "false"
+      CRAWL_BROWSER_CHANNEL: "chrome"
       EUR_RATE: ${{ vars.EUR_RATE || '45' }}
       PLN_RATE: ${{ vars.PLN_RATE || '12.19' }}
 
@@ -53,19 +46,18 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
+        shell: powershell
         run: npm install --legacy-peer-deps
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-
       - name: Verify required secret
+        shell: powershell
         run: |
-          if [ -z "$SUPABASE_SECRET_KEY" ]; then
-            echo "SUPABASE_SECRET_KEY repository secret is missing"
-            exit 1
-          fi
+          if ([string]::IsNullOrWhiteSpace($env:SUPABASE_SECRET_KEY)) {
+            throw "SUPABASE_SECRET_KEY repository secret is missing"
+          }
 
-      - name: Crawl filtered catalog
+      - name: Crawl filtered catalog through local Chrome
+        shell: powershell
         run: npm run crawl:catalog
 
       - name: Upload crawler diagnostics
