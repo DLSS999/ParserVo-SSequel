@@ -1,4 +1,6 @@
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { chromium, type BrowserContext, type Page, type Response } from "playwright";
 import { calculatePricing } from "../app/services/pricing.server";
 import { categoryUrl, selectCategories, type CrawlCategory } from "./ynap-config";
 import {
@@ -15,6 +17,7 @@ const concurrency = Math.max(1, Math.min(8, Number(process.env.CRAWL_CONCURRENCY
 const maxProducts = Math.max(0, Number(process.env.MAX_PRODUCTS || 0));
 const eurRate = Number(process.env.EUR_RATE || 45);
 const plnRate = Number(process.env.PLN_RATE || 12.19);
+const debugDir = path.resolve("crawl-debug");
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -72,7 +75,7 @@ const sizeMap: Array<[RegExp, string]> = [
 
 function normalizeSize(value: string) {
   let clean = value
-    .replace(/\s*[-–—:]\s*(sold out|low stock|only \d+ left|last one|unavailable).*$/i, "")
+    .replace(/\s*[-–—:|]\s*(sold out|low stock|only \d+ left|last one|unavailable|out of stock).*$/i, "")
     .replace(/^size\s*/i, "")
     .trim();
   clean = clean.replace(/^(EU|UK|US)\s+/i, "").trim();
@@ -84,13 +87,16 @@ function normalizeSize(value: string) {
   return null;
 }
 
-function variantsFromLines(lines: string[]) {
+type RawSize = { text: string; disabled?: boolean };
+
+function variantsFromRows(rows: RawSize[], config: CrawlCategory) {
   const bySize = new Map<string, CrawledVariant>();
-  for (const line of lines) {
-    if (!line || line.length > 70) continue;
+  for (const row of rows) {
+    const line = String(row.text || "").trim();
+    if (!line || line.length > 90) continue;
     const size = normalizeSize(line);
     if (!size) continue;
-    const soldOut = /sold out|unavailable|out of stock/i.test(line);
+    const soldOut = Boolean(row.disabled) || /sold out|unavailable|out of stock/i.test(line);
     const lowStock = /low stock|only\s*1|last one/i.test(line);
     const variant: CrawledVariant = {
       size,
@@ -100,10 +106,10 @@ function variantsFromLines(lines: string[]) {
       position: bySize.size + 1,
     };
     const previous = bySize.get(size);
-    if (!previous || soldOut || lowStock || previous.status === "IN_STOCK") bySize.set(size, variant);
+    if (!previous || previous.status === "IN_STOCK" || soldOut || lowStock) bySize.set(size, variant);
   }
 
-  if (!bySize.size) {
+  if (!bySize.size && /bags|accessories/i.test(config.category)) {
     bySize.set("ONE SIZE", {
       size: "ONE SIZE",
       quantity: 5,
@@ -116,11 +122,53 @@ function variantsFromLines(lines: string[]) {
   return [...bySize.values()].map((variant, index) => ({ ...variant, position: index + 1 }));
 }
 
+function normalizeProductUrl(candidate: string, baseUrl: string) {
+  const cleaned = candidate
+    .replace(/\\u002[fF]/g, "/")
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/g, "&")
+    .replace(/["'<>),;]+$/g, "")
+    .trim();
+
+  if (!cleaned || !cleaned.includes("/product/")) return null;
+  try {
+    const url = new URL(cleaned, baseUrl);
+    if (!/(net-a-porter\.com|mrporter\.com)$/i.test(url.hostname)) return null;
+    if (!url.pathname.includes("/product/")) return null;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractProductLinks(text: string, baseUrl: string) {
+  const normalized = text
+    .replace(/\\u002[fF]/g, "/")
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/g, "&");
+  const candidates = new Set<string>();
+  const patterns = [
+    /https?:\/\/[^\s"'<>]+\/product\/[^\s"'<>\\]+/gi,
+    /\/(?:en-[a-z]{2}|[a-z]{2}-[a-z]{2})\/(?:shop\/|mens\/)?product\/[^\s"'<>\\]+/gi,
+    /\/(?:shop\/|mens\/)?product\/[^\s"'<>\\]+/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of normalized.matchAll(pattern)) {
+      const link = normalizeProductUrl(match[0], baseUrl);
+      if (link) candidates.add(link);
+    }
+  }
+  return [...candidates];
+}
+
 async function dismissBanners(page: Page) {
-  for (const label of ["Accept all", "Accept All", "I agree", "Continue", "Close"]) {
+  for (const label of ["Accept all", "Accept All", "Allow all", "I agree", "Continue", "Close"]) {
     try {
       const button = page.getByRole("button", { name: label, exact: false }).first();
-      if (await button.isVisible({ timeout: 500 })) await button.click({ timeout: 1000 });
+      if (await button.isVisible({ timeout: 600 })) await button.click({ timeout: 1500 });
     } catch {
       // Banner not present.
     }
@@ -132,9 +180,9 @@ async function gotoWithRetry(page: Page, url: string) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
-      if (response && response.status() >= 500) throw new Error(`HTTP ${response.status()}`);
+      if (response && response.status() >= 400) throw new Error(`HTTP ${response.status()} for ${url}`);
       await dismissBanners(page);
-      return;
+      return response;
     } catch (error) {
       lastError = error;
       await sleep(1500 * attempt);
@@ -143,46 +191,125 @@ async function gotoWithRetry(page: Page, url: string) {
   throw lastError;
 }
 
+async function saveDebug(page: Page, config: CrawlCategory, pageNumber: number, note: string) {
+  await mkdir(debugDir, { recursive: true });
+  const prefix = path.join(debugDir, `${config.id}-page-${pageNumber}`);
+  const html = await page.content().catch(() => "");
+  const body = await page.locator("body").innerText().catch(() => "");
+  const info = [
+    `note=${note}`,
+    `title=${await page.title().catch(() => "")}`,
+    `url=${page.url()}`,
+    `body=${body.slice(0, 4000)}`,
+  ].join("\n\n");
+  await Promise.all([
+    writeFile(`${prefix}.html`, html, "utf8"),
+    writeFile(`${prefix}.txt`, info, "utf8"),
+    page.screenshot({ path: `${prefix}.png`, fullPage: true }).catch(() => undefined),
+  ]);
+}
+
+async function linksFromDom(page: Page) {
+  const snapshot = await page.evaluate(() => {
+    const values: string[] = [];
+    for (const element of document.querySelectorAll<HTMLElement>("*")) {
+      for (const attribute of Array.from(element.attributes)) {
+        if (attribute.value && /product/i.test(attribute.value)) values.push(attribute.value);
+      }
+    }
+    return {
+      values,
+      html: document.documentElement?.outerHTML || "",
+      body: document.body?.innerText || "",
+      title: document.title,
+    };
+  });
+  return snapshot;
+}
+
 async function collectLinks(context: BrowserContext, config: CrawlCategory, runId: string) {
   const page = await context.newPage();
   const links = new Set<string>();
+  const networkLinks = new Set<string>();
+
+  const inspectResponse = async (response: Response) => {
+    try {
+      const contentType = response.headers()["content-type"] || "";
+      const url = response.url();
+      if (!/(json|javascript|html|text)/i.test(contentType) && !/(search|listing|product|graphql|api)/i.test(url)) return;
+      const contentLength = Number(response.headers()["content-length"] || 0);
+      if (contentLength > 8_000_000) return;
+      const text = await response.text();
+      for (const link of extractProductLinks(text, page.url() || config.baseUrl)) networkLinks.add(link);
+    } catch {
+      // Some response bodies are unavailable after navigation.
+    }
+  };
+
+  page.on("response", (response) => void inspectResponse(response));
+
   try {
     for (let pageNumber = 1; pageNumber <= config.pages; pageNumber += 1) {
       const url = categoryUrl(config, pageNumber);
-      console.log(`[${config.id}] category page ${pageNumber}/${config.pages}`);
-      await gotoWithRetry(page, url);
-      await page.waitForTimeout(1500);
+      console.log(`[${config.id}] category page ${pageNumber}/${config.pages}: ${url}`);
+      const response = await gotoWithRetry(page, url);
+      await page.waitForTimeout(4500);
 
-      for (let step = 0; step < 6; step += 1) {
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await page.waitForTimeout(350);
+      try {
+        await page.waitForSelector('a[href*="/product/"]', { timeout: 8000 });
+      } catch {
+        // Links may live in serialized JSON instead of rendered anchors.
       }
 
-      const pageLinks = await page.evaluate(() => {
-        const result = new Set<string>();
-        for (const anchor of document.querySelectorAll<HTMLAnchorElement>('a[href*="/product/"]')) {
-          try {
-            const url = new URL(anchor.href, location.href);
-            url.search = "";
-            url.hash = "";
-            result.add(url.toString());
-          } catch {
-            // Ignore malformed links.
-          }
-        }
-        return [...result];
-      });
+      let previousHeight = 0;
+      for (let step = 0; step < 12; step += 1) {
+        const height = await page.evaluate(() => document.body.scrollHeight);
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await page.waitForTimeout(500);
+        if (height === previousHeight && step >= 4) break;
+        previousHeight = height;
+      }
 
-      pageLinks.forEach((link) => links.add(link));
+      const snapshot = await linksFromDom(page);
+      const pageLinks = new Set<string>();
+      for (const value of snapshot.values) {
+        const link = normalizeProductUrl(value, page.url());
+        if (link) pageLinks.add(link);
+      }
+      for (const link of extractProductLinks(snapshot.html, page.url())) pageLinks.add(link);
+      for (const link of extractProductLinks(snapshot.body, page.url())) pageLinks.add(link);
+      for (const link of networkLinks) pageLinks.add(link);
+      for (const link of pageLinks) links.add(link);
+
+      const bodyStart = snapshot.body.replace(/\s+/g, " ").slice(0, 500);
+      console.log(
+        `[${config.id}] status=${response?.status() ?? "?"} title=${JSON.stringify(snapshot.title)} ` +
+        `pageLinks=${pageLinks.size} unique=${links.size} body=${JSON.stringify(bodyStart)}`,
+      );
+
+      if (pageLinks.size === 0) {
+        await saveDebug(page, config, pageNumber, "No product links found");
+      }
+
       await updateCrawlRun(runId, {
         pages_done: pageNumber,
         links_found: links.size,
         status: "COLLECTING_LINKS",
-        message: `Page ${pageNumber}: ${pageLinks.length} links; unique ${links.size}`,
+        message: `Page ${pageNumber}: ${pageLinks.size} links; unique ${links.size}; title ${snapshot.title}`,
       });
+
+      if (maxProducts > 0 && links.size >= maxProducts) break;
     }
   } finally {
+    page.removeAllListeners("response");
     await page.close();
+  }
+
+  if (!links.size) {
+    throw new Error(
+      `No product links found for ${config.id}. The category pages were reachable but returned no product URLs. ` +
+      `See the crawl-debug artifact for HTML, screenshot and page text.`,
+    );
   }
 
   const all = [...links];
@@ -191,7 +318,7 @@ async function collectLinks(context: BrowserContext, config: CrawlCategory, runI
 
 async function parsePage(page: Page, url: string, config: CrawlCategory): Promise<CrawledProduct> {
   await gotoWithRetry(page, url);
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(1500);
 
   const raw = await page.evaluate(() => {
     const meta = (name: string) =>
@@ -222,7 +349,7 @@ async function parsePage(page: Page, url: string, config: CrawlCategory): Promis
       .map((line) => line.trim())
       .filter(Boolean);
 
-    const sizeLines: string[] = [];
+    const sizeRows: Array<{ text: string; disabled: boolean }> = [];
     let inSizeArea = false;
     for (const line of bodyLines) {
       if (/^select a size$/i.test(line) || /^size$/i.test(line)) {
@@ -230,12 +357,18 @@ async function parsePage(page: Page, url: string, config: CrawlCategory): Promis
         continue;
       }
       if (inSizeArea && /^(add to bag|add to basket|add to wish list|editors.? notes)$/i.test(line)) break;
-      if (inSizeArea && line.length <= 70) sizeLines.push(line);
+      if (inSizeArea && line.length <= 90) sizeRows.push({ text: line, disabled: /sold out|unavailable/i.test(line) });
     }
 
-    for (const node of document.querySelectorAll<HTMLElement>('[data-testid*="size" i], [aria-label*="size" i], [role="option"]')) {
+    for (const node of document.querySelectorAll<HTMLElement>(
+      '[data-testid*="size" i], [aria-label*="size" i], [role="option"], button[class*="size" i]',
+    )) {
       const text = (node.innerText || node.getAttribute("aria-label") || "").trim();
-      if (text && text.length <= 70) sizeLines.push(text);
+      const disabled =
+        node.hasAttribute("disabled") ||
+        node.getAttribute("aria-disabled") === "true" ||
+        /disabled|sold.?out|unavailable/i.test(node.className);
+      if (text && text.length <= 90) sizeRows.push({ text, disabled });
     }
 
     const imageCandidates = [...document.querySelectorAll<HTMLImageElement>("img")]
@@ -276,9 +409,9 @@ async function parsePage(page: Page, url: string, config: CrawlCategory): Promis
       compareAt: compareText,
       color: colorLine.replace(/^color\s*:\s*/i, ""),
       composition: compositionLines.join("; "),
-      sizeLines,
+      sizeRows,
       images: [
-        ...(Array.isArray(productLd.image) ? productLd.image.map((url: string) => ({ url, alt: "" })) : productLd.image ? [{ url: productLd.image, alt: "" }] : []),
+        ...(Array.isArray(productLd.image) ? productLd.image.map((imageUrl: string) => ({ url: imageUrl, alt: "" })) : productLd.image ? [{ url: productLd.image, alt: "" }] : []),
         { url: meta("og:image"), alt: "" },
         ...imageCandidates,
       ],
@@ -297,7 +430,9 @@ async function parsePage(page: Page, url: string, config: CrawlCategory): Promis
   const supplierPrice = parseMoney(raw.price);
   if (!supplierPrice || supplierPrice > 2000) throw new Error(`Price outside filter: ${supplierPrice}`);
   const compareAtPrice = parseMoney(raw.compareAt) || null;
-  const variants = variantsFromLines(raw.sizeLines);
+  const variants = variantsFromRows(raw.sizeRows, config);
+  if (!variants.length) throw new Error(`No size or availability information found for ${title}`);
+
   const productCode = new URL(url).pathname.split("/").filter(Boolean).pop() || slug(title);
   const pathParts = new URL(url).pathname.split("/").filter(Boolean);
   const productSlug = pathParts[pathParts.length - 2] || slug(title);
@@ -367,7 +502,7 @@ async function parsePage(page: Page, url: string, config: CrawlCategory): Promis
     media,
     payload: {
       sourceTitle: raw.title,
-      sizeLines: raw.sizeLines,
+      sizeRows: raw.sizeRows,
       bodySample: raw.bodySample,
     },
   };
@@ -454,7 +589,7 @@ async function main() {
   const context = await browser.newContext({
     locale: "en-GB",
     viewport: { width: 1440, height: 1200 },
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     extraHTTPHeaders: {
       "Accept-Language": "en-GB,en;q=0.9",
     },
