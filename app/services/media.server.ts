@@ -6,10 +6,30 @@ export type SourceMediaItem = {
   posterUrl?: string | null;
 };
 
+export type ParsedMarketplaceVariant = {
+  size: string;
+  sku?: string | null;
+  quantity: number;
+  available: boolean;
+  position: number;
+  costPriceUah?: number | null;
+  salePriceUah?: number | null;
+  compareAtPriceUah?: number | null;
+};
+
+export type ParsedMarketplacePricing = {
+  costPriceUah: number;
+  salePriceUah: number;
+  compareAtPriceUah?: number | null;
+};
+
 export type ParsedMarketplaceProduct = {
+  handle?: string | null;
   source: "NET_A_PORTER" | "MR_PORTER";
   gender: "WOMEN" | "MEN";
   category: string;
+  productCategory?: string | null;
+  productType?: string | null;
   brand: string;
   title: string;
   sourceUrl: string;
@@ -19,7 +39,12 @@ export type ParsedMarketplaceProduct = {
   currency: string;
   color?: string | null;
   sizes: string[];
+  variants?: ParsedMarketplaceVariant[];
+  pricing?: ParsedMarketplacePricing | null;
+  tags?: string[];
+  status?: string | null;
   description?: string | null;
+  descriptionHtml?: string | null;
   composition?: string | null;
   media: SourceMediaItem[];
 };

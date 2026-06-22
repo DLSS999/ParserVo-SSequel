@@ -1,4 +1,4 @@
-import type { ParsedMarketplaceProduct } from "./media.server";
+import type { ParsedMarketplaceProduct, ParsedMarketplaceVariant } from "./media.server";
 import { splitMedia } from "./media.server";
 import { calculatePricing, sortSizesForShopify } from "./pricing.server";
 
@@ -43,17 +43,17 @@ function money(value: number | null | undefined) {
   return Number.isFinite(number) ? number.toFixed(2) : "0.00";
 }
 
+function productTitle(product: ParsedMarketplaceProduct) {
+  const brand = String(product.brand || "").trim();
+  const title = String(product.title || "").trim();
+  return title.toUpperCase().startsWith(brand.toUpperCase()) ? title : `${brand} ${title}`.trim();
+}
+
 function toProductGid(value: string) {
   const clean = value.trim();
   if (clean.startsWith("gid://shopify/Product/")) return clean;
   if (/^\d+$/.test(clean)) return `gid://shopify/Product/${clean}`;
   throw new ShopifyImportError("Shopify Product ID must be numeric or gid://shopify/Product/...");
-}
-
-function fileName(url: string, index: number) {
-  const pathname = new URL(url).pathname;
-  const raw = pathname.split("/").pop() || `product-${index + 1}.jpg`;
-  return /\.(png|jpe?g|webp|gif)$/i.test(raw) ? raw : `product-${index + 1}.jpg`;
 }
 
 async function resolveLocation(admin: AdminClient) {
@@ -74,12 +74,28 @@ async function resolveLocation(admin: AdminClient) {
   }
 }
 
+function buildVariants(product: ParsedMarketplaceProduct, defaultQuantity: number): ParsedMarketplaceVariant[] {
+  if (product.variants?.length) {
+    return [...product.variants]
+      .filter((variant) => variant.available !== false)
+      .sort((a, b) => a.position - b.position);
+  }
+
+  const sizes = sortSizesForShopify(product.sizes.length ? product.sizes : ["Default Title"]);
+  return sizes.map((size, index) => ({
+    size,
+    quantity: defaultQuantity,
+    available: true,
+    position: index + 1,
+  }));
+}
+
 export async function createShopifyProduct(
   admin: AdminClient,
   product: ParsedMarketplaceProduct,
   settings: ImportSettings,
 ) {
-  const pricing = calculatePricing({
+  const calculated = calculatePricing({
     supplierPrice: product.price || 0,
     supplierOldPrice: product.compareAtPrice || null,
     currency: product.currency,
@@ -89,73 +105,77 @@ export async function createShopifyProduct(
     compareAtEnabled: true,
   });
 
-  const sizes = sortSizesForShopify(product.sizes.length ? product.sizes : ["Default Title"]);
-  const defaultVariant = sizes.length === 1 && sizes[0] === "Default Title";
+  const baseCost = product.pricing?.costPriceUah ?? calculated.costPriceUah;
+  const baseSale = product.pricing?.salePriceUah ?? calculated.salePriceUah;
+  const baseCompareAt = product.pricing?.compareAtPriceUah ?? calculated.compareAtPriceUah;
+  const variants = buildVariants(product, settings.defaultQuantity);
+  if (!variants.length) throw new ShopifyImportError("У товара нет доступных размеров.");
+
+  const defaultVariant = variants.length === 1 && variants[0].size === "Default Title";
   const optionName = defaultVariant ? "Title" : "Size";
   const location = await resolveLocation(admin);
-  const { images, videos } = splitMedia(product.media);
+  const { images } = splitMedia(product.media);
   const validImages = images.filter((item) => /^https?:\/\//i.test(item.url)).slice(0, 5);
-  const validVideos = videos.filter((item) => /^https?:\/\//i.test(item.url)).slice(0, 1);
 
-  const files = [
-    ...validImages.map((image, index) => ({
-      originalSource: image.url,
-      alt: image.alt || `${product.brand} ${product.title} ${index + 1}`,
-      filename: fileName(image.url, index),
-      contentType: "IMAGE",
-    })),
-    ...validVideos.map((video, index) => ({
-      originalSource: video.url,
-      alt: video.alt || `${product.brand} ${product.title} video`,
-      filename: `product-video-${index + 1}.mp4`,
-      contentType: "VIDEO",
-    })),
-  ];
+  const files = validImages.map((image, index) => ({
+    originalSource: image.url,
+    alt: image.alt || `${productTitle(product)} ${index + 1}`,
+    contentType: "IMAGE",
+  }));
+
+  const descriptionHtml = product.descriptionHtml || [
+    product.description ? `<p>${product.description}</p>` : "",
+    product.composition ? `<p><strong>Composition:</strong> ${product.composition}</p>` : "",
+    product.color ? `<p><strong>Color:</strong> ${product.color}</p>` : "",
+  ].filter(Boolean).join("\n");
 
   const input = {
-    title: `${product.brand} ${product.title}`.trim(),
-    descriptionHtml: [
-      product.description ? `<p>${product.description}</p>` : "",
-      product.composition ? `<p><strong>Composition:</strong> ${product.composition}</p>` : "",
-      product.color ? `<p><strong>Color:</strong> ${product.color}</p>` : "",
-      `<p><strong>Source:</strong> ${product.sourceUrl}</p>`,
-    ].filter(Boolean).join("\n"),
+    title: productTitle(product),
+    ...(product.handle ? { handle: product.handle } : {}),
+    descriptionHtml: `${descriptionHtml}<p><strong>Source:</strong> ${product.sourceUrl}</p>`,
     vendor: product.brand,
-    productType: product.category,
+    productType: product.productType || product.category,
     status: "DRAFT",
-    tags: [
+    tags: Array.from(new Set([
+      ...(product.tags || []),
       product.source === "NET_A_PORTER" ? "NET-A-PORTER" : "MR PORTER",
       product.gender === "WOMEN" ? "Women" : "Men",
       "Imported by ParserVo",
       "Preorder",
-      product.category,
-    ],
+    ])),
     productOptions: [{
       name: optionName,
       position: 1,
-      values: sizes.map((size) => ({ name: size })),
+      values: variants.map((variant) => ({ name: variant.size })),
     }],
     files,
-    variants: sizes.map((size) => ({
-      optionValues: [{ optionName, name: size }],
-      sku: [product.supplierProductId, defaultVariant ? null : size].filter(Boolean).join("-"),
-      price: money(pricing.salePriceUah),
-      compareAtPrice: pricing.compareAtPriceUah ? money(pricing.compareAtPriceUah) : null,
-      inventoryPolicy: "DENY",
-      taxable: true,
-      inventoryItem: {
-        tracked: true,
-        requiresShipping: true,
-        cost: money(pricing.costPriceUah),
-      },
-      ...(location ? {
-        inventoryQuantities: [{
-          locationId: location.id,
-          name: "available",
-          quantity: Math.max(0, Math.trunc(settings.defaultQuantity)),
-        }],
-      } : {}),
-    })),
+    variants: variants.map((variant) => {
+      const cost = variant.costPriceUah ?? baseCost;
+      const sale = variant.salePriceUah ?? baseSale;
+      const compareAt = variant.compareAtPriceUah ?? baseCompareAt;
+      const quantity = Math.max(0, Math.trunc(variant.quantity ?? settings.defaultQuantity));
+
+      return {
+        optionValues: [{ optionName, name: variant.size }],
+        sku: variant.sku || [product.supplierProductId, defaultVariant ? null : variant.size].filter(Boolean).join("-"),
+        price: money(sale),
+        compareAtPrice: compareAt && compareAt > sale ? money(compareAt) : null,
+        inventoryPolicy: "DENY",
+        taxable: true,
+        inventoryItem: {
+          tracked: true,
+          requiresShipping: true,
+          cost: money(cost),
+        },
+        ...(location ? {
+          inventoryQuantities: [{
+            locationId: location.id,
+            name: "available",
+            quantity,
+          }],
+        } : {}),
+      };
+    }),
   };
 
   const data = await graphql<{
@@ -197,7 +217,7 @@ export async function createShopifyProduct(
     ...data.productSet.product,
     locationName: location?.name || null,
     uploadedImages: validImages.length,
-    uploadedVideos: validVideos.length,
+    uploadedVideos: 0,
   };
 }
 
