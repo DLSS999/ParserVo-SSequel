@@ -14,6 +14,12 @@ export type CrawlJob = {
   agent_id: string | null;
   message: string | null;
   result: Record<string, unknown> | null;
+  pages_total?: number | null;
+  pages_done?: number | null;
+  links_found?: number | null;
+  products_total?: number | null;
+  products_done?: number | null;
+  products_failed?: number | null;
 };
 
 export type ParserVoAgent = {
@@ -75,7 +81,7 @@ export async function enqueueCrawlJob(input: {
       category_id: input.categoryId,
       max_products: Math.max(0, Math.trunc(input.maxProducts || 0)),
       status: "QUEUED",
-      message: "Waiting for ParserVo Agent",
+      message: "Waiting for ParserVo Chrome Capture",
     }]),
   });
   return rows?.[0] as CrawlJob;
