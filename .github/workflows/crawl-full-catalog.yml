@@ -28,11 +28,16 @@ jobs:
     env:
       SUPABASE_URL: https://cuzjuykyelzrvxxbcjry.supabase.co
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      SHOPIFY_API_KEY: ${{ secrets.SHOPIFY_API_KEY }}
+      SHOPIFY_API_SECRET: ${{ secrets.SHOPIFY_API_SECRET }}
+      SHOPIFY_SHOP_DOMAIN: ${{ secrets.SHOPIFY_SHOP_DOMAIN }}
       CRAWL_CATEGORY: ${{ inputs.category }}
       MAX_PRODUCTS: ${{ inputs.max_products }}
-      CRAWL_CONCURRENCY: "3"
-      CRAWL_HEADLESS: "false"
+      MAX_SYNC_PRODUCTS: ${{ inputs.max_products }}
+      CRAWL_CONCURRENCY: "2"
+      CRAWL_HEADLESS: "true"
       CRAWL_BROWSER_CHANNEL: "chrome"
+      DEFAULT_QUANTITY: "5"
       EUR_RATE: ${{ vars.EUR_RATE || '45' }}
       PLN_RATE: ${{ vars.PLN_RATE || '12.19' }}
 
@@ -49,16 +54,28 @@ jobs:
         shell: powershell
         run: npm install --legacy-peer-deps
 
-      - name: Verify required secret
+      - name: Verify required secrets
         shell: powershell
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:SUPABASE_SECRET_KEY)) {
-            throw "SUPABASE_SECRET_KEY repository secret is missing"
+          $required = @(
+            "SUPABASE_SECRET_KEY",
+            "SHOPIFY_API_KEY",
+            "SHOPIFY_API_SECRET",
+            "SHOPIFY_SHOP_DOMAIN"
+          )
+          foreach ($name in $required) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "$name repository secret is missing"
+            }
           }
 
       - name: Crawl filtered catalog through local Chrome
         shell: powershell
         run: npm run crawl:catalog
+
+      - name: Synchronize parsed products to Shopify
+        shell: powershell
+        run: npm run sync:shopify
 
       - name: Upload crawler diagnostics
         if: always()
