@@ -4,6 +4,7 @@ import { Link, Outlet, useLoaderData, useLocation, useRouteError } from "@remix-
 import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { authenticate } from "../shopify.server";
+import { hasSupabaseAdmin, persistShopSession } from "../services/supabase-admin.server";
 
 const i18n = {
   Polaris: {
@@ -27,8 +28,29 @@ const i18n = {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const configReady = Boolean(process.env.SHOPIFY_API_KEY && process.env.SHOPIFY_API_SECRET && process.env.SHOPIFY_APP_URL);
-  if (configReady) await authenticate.admin(request);
-  return json({ apiKey: process.env.SHOPIFY_API_KEY || "", configReady });
+  let sessionStored = false;
+
+  if (configReady) {
+    const auth = await authenticate.admin(request);
+    if (hasSupabaseAdmin()) {
+      try {
+        sessionStored = await persistShopSession(auth.session as {
+          shop: string;
+          accessToken?: string;
+          scope?: string;
+          isOnline?: boolean;
+        });
+      } catch (error) {
+        console.error("ParserVo session persistence failed", error);
+      }
+    }
+  }
+
+  return json({
+    apiKey: process.env.SHOPIFY_API_KEY || "",
+    configReady,
+    sessionStored,
+  });
 };
 
 export default function AppLayout() {
