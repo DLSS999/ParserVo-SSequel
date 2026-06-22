@@ -50,7 +50,26 @@ export function verifyBrowserCaptureKey(shopDomain: string, supplied: string) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+async function findRunningJob(shopDomain: string) {
+  const rows = await databaseRequest(
+    `parservo_crawl_jobs?shop_domain=eq.${encodeURIComponent(shopDomain)}&status=eq.RUNNING&select=*&order=started_at.asc&limit=1`,
+  );
+  return Array.isArray(rows) ? rows[0] || null : null;
+}
+
 export async function claimBrowserCrawlJob(shopDomain: string, agentId: string) {
+  const running = await findRunningJob(shopDomain);
+  if (running?.id) {
+    await updateBrowserCrawlJob(running.id, {
+      agent_id: agentId,
+      message: "Chrome extension resumed the running job",
+    });
+    return {
+      ...running,
+      agent_id: agentId,
+    };
+  }
+
   const data = await databaseRequest("rpc/parservo_claim_crawl_job", {
     method: "POST",
     body: JSON.stringify({ p_agent_id: agentId }),
