@@ -16,6 +16,18 @@ export type CrawlJob = {
   result: Record<string, unknown> | null;
 };
 
+export type ParserVoAgent = {
+  agent_id: string;
+  shop_domain: string | null;
+  hostname: string | null;
+  status: string;
+  current_job_id: string | null;
+  message: string | null;
+  version: string | null;
+  started_at: string;
+  last_seen_at: string;
+};
+
 function config() {
   const url = process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
   const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -71,6 +83,12 @@ export async function enqueueCrawlJob(input: {
 
 export async function listCrawlJobs(shopDomain: string, limit = 20): Promise<CrawlJob[]> {
   const path = `parservo_crawl_jobs?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=*&order=requested_at.desc&limit=${Math.max(1, Math.min(limit, 100))}`;
+  const rows = await rest(path);
+  return Array.isArray(rows) ? rows : [];
+}
+
+export async function listParserVoAgents(shopDomain: string): Promise<ParserVoAgent[]> {
+  const path = `parservo_agents?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=*&order=last_seen_at.desc&limit=20`;
   const rows = await rest(path);
   return Array.isArray(rows) ? rows : [];
 }
