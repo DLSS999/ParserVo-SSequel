@@ -1,7 +1,17 @@
 import type { ParsedMarketplaceProduct, ParsedMarketplaceVariant } from "./media.server";
 import { splitMedia } from "./media.server";
 import { calculatePricing, sortSizesForShopify } from "./pricing.server";
-import { buildDescriptionHtml, getProductMapping } from "./product-mapping.server";
+import { buildDescriptionHtml } from "./product-mapping.server";
+import {
+  cleanPublicDescription,
+  getCorrectProductMapping,
+  publicProductTags,
+} from "./product-field-fixes.server";
+import {
+  getColorValue,
+  getTargetGenderValue,
+  setNativeCategoryMetafields,
+} from "./shopify-native-category-metafields.server";
 import { stageVideoForProductSet } from "./shopify-staged-video.server";
 import { resolveShopifyTaxonomyCategory } from "./shopify-taxonomy.server";
 
@@ -78,9 +88,71 @@ async function resolveLocation(admin: AdminClient) {
   return data.locations.nodes.find((location) => location.isActive !== false) || data.locations.nodes[0] || null;
 }
 
-export function mapSupplierQuantity(rawQuantity: number | null | undefined, available: boolean | null | undefined, fallbackQuantity: number) {
-  if (available === false) return 0;
-  if (rawQuantity === 0) return 0;
+async function existingProductMedia(admin: AdminClient, handle: string) {
+  try {
+    const data = await graphql<{
+      products: { nodes: Array<{ id: string; media: { nodes: Array<{ id: string }> } }> };
+    }>(
+      admin,
+      `#graphql
+        query ParserVoExistingProductMedia($query: String!) {
+          products(first: 1, query: $query) {
+            nodes { id media(first: 100) { nodes { id } } }
+          }
+        }
+      `,
+      { query: `handle:${handle}` },
+    );
+    const product = data.products.nodes[0];
+    return {
+      productId: product?.id || null,
+      mediaIds: product?.media?.nodes?.map((item) => item.id).filter(Boolean) || [],
+    };
+  } catch {
+    return { productId: null, mediaIds: [] as string[] };
+  }
+}
+
+async function deleteOldMedia(
+  admin: AdminClient,
+  productId: string,
+  mediaIds: string[],
+) {
+  if (!productId || !mediaIds.length) return [] as string[];
+  try {
+    const data = await graphql<{
+      productDeleteMedia: {
+        mediaUserErrors?: UserError[];
+        userErrors?: UserError[];
+      };
+    }>(
+      admin,
+      `#graphql
+        mutation ParserVoDeleteOldMedia($productId: ID!, $mediaIds: [ID!]!) {
+          productDeleteMedia(productId: $productId, mediaIds: $mediaIds) {
+            deletedMediaIds
+            mediaUserErrors { field message }
+            userErrors { field message }
+          }
+        }
+      `,
+      { productId, mediaIds },
+    );
+    return [
+      ...(data.productDeleteMedia.mediaUserErrors || []),
+      ...(data.productDeleteMedia.userErrors || []),
+    ].map((error) => error.message);
+  } catch (error) {
+    return [error instanceof Error ? error.message : String(error)];
+  }
+}
+
+export function mapSupplierQuantity(
+  rawQuantity: number | null | undefined,
+  available: boolean | null | undefined,
+  fallbackQuantity: number,
+) {
+  if (available === false || rawQuantity === 0) return 0;
   if (rawQuantity === 1) return 1;
   if (typeof rawQuantity === "number" && rawQuantity > 1) return 5;
   if (available === true) return 5;
@@ -112,63 +184,58 @@ function isMirroredMedia(url: string) {
     || /cdn\.shopify\.com/i.test(url);
 }
 
-function safeMediaFilename(handle: string, type: "image" | "video", position: number, url: string) {
-  let extension = type === "video" ? "mp4" : "jpg";
+function safeMediaFilename(handle: string, position: number, url: string) {
+  let extension = "jpg";
   try {
-    const pathname = new URL(url).pathname;
-    const match = pathname.match(/\.([a-z0-9]{2,5})$/i);
+    const match = new URL(url).pathname.match(/\.([a-z0-9]{2,5})$/i);
     if (match) extension = match[1].toLowerCase() === "jpeg" ? "jpg" : match[1].toLowerCase();
   } catch {
-    // Use default extension.
+    // Keep jpg.
   }
-  return `${handle}-${type}-${position}.${extension}`;
+  return `${handle}-image-${position}.${extension}`;
 }
 
-async function setParserVoMetafields(
+function customMetafields(productId: string, product: ParsedMarketplaceProduct) {
+  const mapping = getCorrectProductMapping(product);
+  const color = getColorValue(product);
+  const targetGender = getTargetGenderValue(product);
+  return [
+    { ownerId: productId, namespace: "custom", key: "name_type", type: "single_line_text_field", value: mapping.nameType },
+    { ownerId: productId, namespace: "custom", key: "disclosures", type: "single_line_text_field", value: "Передзамовлення. Доставка з Європи." },
+    { ownerId: productId, namespace: "custom", key: "link", type: "url", value: product.sourceUrl },
+    { ownerId: productId, namespace: "custom", key: "category_color", type: "single_line_text_field", value: color },
+    { ownerId: productId, namespace: "custom", key: "category_target_gender", type: "single_line_text_field", value: targetGender },
+  ].filter((entry) => String(entry.value || "").trim());
+}
+
+function productSetMetafields(product: ParsedMarketplaceProduct) {
+  return customMetafields("", product).map(({ ownerId: _ownerId, ...entry }) => entry);
+}
+
+async function setCustomMetafields(
   admin: AdminClient,
   productId: string,
   product: ParsedMarketplaceProduct,
 ) {
-  const mapping = getProductMapping(product);
-  const metafields = [
-    { ownerId: productId, namespace: "custom", key: "name_type", value: mapping.nameType },
-    { ownerId: productId, namespace: "custom", key: "disclosures", value: "Передзамовлення. Доставка з Європи." },
-    { ownerId: productId, namespace: "custom", key: "link", value: product.sourceUrl },
-    {
-      ownerId: productId,
-      namespace: "parservo",
-      key: "supplier_name",
-      type: "single_line_text_field",
-      value: product.source === "NET_A_PORTER" ? "NET-A-PORTER" : "MR PORTER",
-    },
-    {
-      ownerId: productId,
-      namespace: "parservo",
-      key: "supplier_product_id",
-      type: "single_line_text_field",
-      value: String(product.supplierProductId || product.handle || ""),
-    },
-    { ownerId: productId, namespace: "parservo", key: "supplier_url", type: "url", value: product.sourceUrl },
-  ].filter((entry) => String(entry.value || "").trim());
-
+  const metafields = customMetafields(productId, product);
+  if (!metafields.length) return [] as string[];
   const data = await graphql<{
     metafieldsSet: {
-      metafields: Array<{ id: string; namespace: string; key: string }>;
-      userErrors: UserError[];
+      metafields?: Array<{ id: string }>;
+      userErrors?: UserError[];
     };
   }>(
     admin,
     `#graphql
       mutation ParserVoSetProductMetafields($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
-          metafields { id namespace key }
+          metafields { id }
           userErrors { code field message }
         }
       }
     `,
     { metafields },
   );
-
   return (data.metafieldsSet.userErrors || []).map((error) => error.message);
 }
 
@@ -181,7 +248,7 @@ export async function syncProductToShopify(
   const variants = normalizedVariants(product, settings);
   if (!variants.length) throw new Error(`Товар ${productTitle(product)} пропущен: нет размеров в наличии.`);
 
-  const calculated = calculatePricing({
+  const pricing = calculatePricing({
     supplierPrice: product.price || 0,
     supplierOldPrice: product.compareAtPrice || null,
     currency: product.currency,
@@ -191,12 +258,14 @@ export async function syncProductToShopify(
     compareAtEnabled: true,
   });
 
-  const mapping = getProductMapping(product);
-  const taxonomy = await resolveShopifyTaxonomyCategory(admin, product);
-  const baseCost = product.pricing?.costPriceUah ?? calculated.costPriceUah;
-  const baseSale = product.pricing?.salePriceUah ?? calculated.salePriceUah;
-  const baseCompareAt = product.pricing?.compareAtPriceUah ?? calculated.compareAtPriceUah;
-  const defaultVariant = variants.length === 1 && ["DEFAULT TITLE", "ONE SIZE", "OS"].includes(variants[0].size.toUpperCase());
+  const mapping = getCorrectProductMapping(product);
+  const taxonomy = await resolveShopifyTaxonomyCategory(admin, {
+    ...product,
+    productType: mapping.productType,
+    productCategory: mapping.taxonomyPath,
+  });
+  const defaultVariant = variants.length === 1
+    && ["DEFAULT TITLE", "ONE SIZE", "OS"].includes(variants[0].size.toUpperCase());
   const optionName = defaultVariant ? "Title" : "Розмір";
   const location = await resolveLocation(admin);
   if (!location) throw new Error("В Shopify не найдена активная локация для остатков.");
@@ -212,11 +281,10 @@ export async function syncProductToShopify(
   const files: Array<Record<string, unknown>> = validImages.map((image, index) => ({
     originalSource: image.url,
     alt: image.alt || `${productTitle(product)} ${index + 1}`,
-    filename: safeMediaFilename(handle, "image", index + 1, image.url),
+    filename: safeMediaFilename(handle, index + 1, image.url),
     contentType: "IMAGE",
     duplicateResolutionMode: "REPLACE",
   }));
-
   for (let index = 0; index < validVideos.length; index += 1) {
     files.push(await stageVideoForProductSet({
       admin,
@@ -226,7 +294,12 @@ export async function syncProductToShopify(
     }));
   }
 
-  const descriptionHtml = product.descriptionHtml || buildDescriptionHtml(product);
+  const cleanDescription = cleanPublicDescription(product.descriptionHtml || product.description);
+  const descriptionHtml = cleanDescription
+    ? buildDescriptionHtml({ ...product, description: cleanDescription, descriptionHtml: null })
+    : buildDescriptionHtml(product);
+  const oldMedia = files.length ? await existingProductMedia(admin, handle) : { productId: null, mediaIds: [] as string[] };
+
   const input = {
     title: productTitle(product),
     handle,
@@ -234,44 +307,40 @@ export async function syncProductToShopify(
     vendor: product.brand,
     productType: mapping.productType,
     status: "DRAFT",
-    tags: Array.from(new Set([
-      ...(product.tags || []),
-      product.source === "NET_A_PORTER" ? "NET-A-PORTER" : "MR PORTER",
-      product.gender === "WOMEN" ? "Women" : "Men",
-      mapping.productType,
-      "Imported by ParserVo",
-      "Preorder",
-    ])),
+    tags: publicProductTags(product, mapping.productType),
+    metafields: productSetMetafields(product),
     ...(taxonomy.id ? { category: taxonomy.id } : {}),
     productOptions: [{
       name: optionName,
       position: 1,
-      values: variants.map((variant) => ({ name: defaultVariant ? "Default Title" : variant.size })),
+      values: variants.map((variant) => ({
+        name: defaultVariant ? "Default Title" : variant.size,
+      })),
     }],
     ...(files.length ? { files } : {}),
-    variants: variants.map((variant) => {
-      const cost = variant.costPriceUah ?? baseCost;
-      const sale = variant.salePriceUah ?? baseSale;
-      const compareAt = variant.compareAtPriceUah ?? baseCompareAt;
-      return {
-        optionValues: [{ optionName, name: defaultVariant ? "Default Title" : variant.size }],
-        sku: variant.sku || [product.supplierProductId, defaultVariant ? null : variant.size].filter(Boolean).join("-"),
-        price: money(sale),
-        compareAtPrice: compareAt && compareAt > sale ? money(compareAt) : null,
-        inventoryPolicy: "DENY",
-        taxable: true,
-        inventoryItem: {
-          tracked: true,
-          requiresShipping: true,
-          cost: money(cost),
-        },
-        inventoryQuantities: [{
-          locationId: location.id,
-          name: "available",
-          quantity: variant.quantity,
-        }],
-      };
-    }),
+    variants: variants.map((variant) => ({
+      optionValues: [{
+        optionName,
+        name: defaultVariant ? "Default Title" : variant.size,
+      }],
+      sku: variant.sku || [product.supplierProductId, defaultVariant ? null : variant.size].filter(Boolean).join("-"),
+      price: money(pricing.salePriceUah),
+      compareAtPrice: pricing.compareAtPriceUah && pricing.compareAtPriceUah > pricing.salePriceUah
+        ? money(pricing.compareAtPriceUah)
+        : null,
+      inventoryPolicy: "DENY",
+      taxable: true,
+      inventoryItem: {
+        tracked: true,
+        requiresShipping: true,
+        cost: money(pricing.costPriceUah),
+      },
+      inventoryQuantities: [{
+        locationId: location.id,
+        name: "available",
+        quantity: variant.quantity,
+      }],
+    })),
   };
 
   const data = await graphql<{
@@ -290,10 +359,8 @@ export async function syncProductToShopify(
       mutation ParserVoUpsertProduct($input: ProductSetInput!, $identifier: ProductSetIdentifiers, $synchronous: Boolean!) {
         productSet(input: $input, identifier: $identifier, synchronous: $synchronous) {
           product {
-            id
-            title
-            handle
-            media(first: 10) { nodes { id mediaContentType status } }
+            id title handle
+            media(first: 20) { nodes { id mediaContentType status } }
           }
           userErrors { code field message }
         }
@@ -305,7 +372,13 @@ export async function syncProductToShopify(
   throwUserErrors("Shopify sync failed", data.productSet.userErrors);
   if (!data.productSet.product) throw new Error("Shopify не вернул созданный или обновлённый товар.");
 
-  const metafieldErrors = await setParserVoMetafields(admin, data.productSet.product.id, product);
+  const warnings: string[] = [];
+  warnings.push(...await setCustomMetafields(admin, data.productSet.product.id, product));
+  const native = await setNativeCategoryMetafields(admin, data.productSet.product.id, product);
+  warnings.push(...native.errors);
+  if (files.length && oldMedia.mediaIds.length) {
+    warnings.push(...await deleteOldMedia(admin, data.productSet.product.id, oldMedia.mediaIds));
+  }
 
   return {
     handle,
@@ -315,7 +388,7 @@ export async function syncProductToShopify(
     images: validImages.length,
     videos: validVideos.length,
     category: taxonomy.matchedFullName || taxonomy.requestedFullName || null,
-    metafieldErrors,
+    metafieldErrors: warnings.filter(Boolean),
     action: "created_or_updated",
   };
 }
