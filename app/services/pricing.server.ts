@@ -10,7 +10,11 @@ export type PricingInput = {
 
 export function toDecimalNumber(value: unknown, fallback = 0) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  const raw = String(value ?? "").trim().replace(/\s+/g, "").replace(/,/g, ".").replace(/[^\d.-]/g, "");
+  const raw = String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/,/g, ".")
+    .replace(/[^\d.-]/g, "");
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
@@ -20,7 +24,10 @@ function positive(value: unknown, fallback: number) {
   return parsed > 0 ? parsed : fallback;
 }
 
-function roundUp(value: number, step: number) { return Math.ceil(value / step) * step; }
+function roundUp(value: number, step: number) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.ceil(value / step) * step;
+}
 
 function roundPrice(value: number, rule: string) {
   if (rule === "round_to_5") return roundUp(value, 5);
@@ -33,21 +40,13 @@ function roundPrice(value: number, rule: string) {
 
 function getCurrencyRate(currency: string, eurRate: number, plnRate: number) {
   const normalized = String(currency || "").toUpperCase().trim();
-  if (normalized === "EUR" || normalized === "€") return positive(eurRate, 45);
+  if (normalized === "EUR" || normalized === "€") return positive(eurRate, 55);
   if (normalized === "PLN" || normalized === "ZŁ" || normalized === "ZL") return positive(plnRate, 12.19);
   return 1;
 }
 
 function calculateSale(costPriceUah: number, roundingRule: string) {
-  let fixedProfit = 5000;
-  if (costPriceUah > 50000 && costPriceUah <= 100000) fixedProfit = 10000;
-  if (costPriceUah > 100000) fixedProfit = 20000;
-  return roundPrice((costPriceUah + fixedProfit) * 1.05, roundingRule);
-}
-
-function calculateCompareAt(costPriceUah: number, salePriceUah: number, roundingRule: string) {
-  const compareAt = roundPrice(costPriceUah * (73500 / 35340), roundingRule);
-  return Math.max(compareAt, salePriceUah);
+  return roundPrice(costPriceUah + 5000, roundingRule);
 }
 
 export function calculatePricing(input: PricingInput) {
@@ -56,7 +55,15 @@ export function calculatePricing(input: PricingInput) {
   const roundingRule = input.roundingRule || "round_to_5";
   const costPriceUah = roundPrice(supplierPrice * exchangeRateUsed, roundingRule);
   const salePriceUah = calculateSale(costPriceUah, roundingRule);
-  const compareAtPriceUah = input.compareAtEnabled === false ? null : calculateCompareAt(costPriceUah, salePriceUah, roundingRule);
+
+  const supplierOldPrice = Math.max(0, toDecimalNumber(input.supplierOldPrice, 0));
+  const compareAtPriceUah = input.compareAtEnabled !== false && supplierOldPrice > supplierPrice
+    ? Math.max(
+        salePriceUah,
+        calculateSale(roundPrice(supplierOldPrice * exchangeRateUsed, roundingRule), roundingRule),
+      )
+    : null;
+
   return {
     exchangeRateUsed,
     costPriceUah,
@@ -69,13 +76,18 @@ export function calculatePricing(input: PricingInput) {
   };
 }
 
+function numericSize(value: string) {
+  const match = String(value || "").toUpperCase().match(/^(?:IT|EU|FR|UK|US)?\s*(\d+(?:\.5)?)$/);
+  return match ? Number(match[1]) : Number.NaN;
+}
+
 export function sortSizesForShopify(sizes: string[]) {
-  const order = ["XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL", "ONE SIZE", "OS"];
+  const order = ["XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "2XL", "XXXL", "3XL", "ONE SIZE", "OS"];
   return [...new Set(sizes.map((size) => String(size).trim()).filter(Boolean))].sort((a, b) => {
     const aNorm = a.toUpperCase();
     const bNorm = b.toUpperCase();
-    const aNumber = Number(aNorm.replace(",", "."));
-    const bNumber = Number(bNorm.replace(",", "."));
+    const aNumber = numericSize(aNorm);
+    const bNumber = numericSize(bNorm);
     if (Number.isFinite(aNumber) && Number.isFinite(bNumber)) return aNumber - bNumber;
     const aIndex = order.indexOf(aNorm);
     const bIndex = order.indexOf(bNorm);
