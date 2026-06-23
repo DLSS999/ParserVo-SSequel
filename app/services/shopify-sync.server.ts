@@ -2,6 +2,7 @@ import type { ParsedMarketplaceProduct, ParsedMarketplaceVariant } from "./media
 import { splitMedia } from "./media.server";
 import { calculatePricing, sortSizesForShopify } from "./pricing.server";
 import { buildDescriptionHtml, getProductMapping } from "./product-mapping.server";
+import { stageVideoForProductSet } from "./shopify-staged-video.server";
 import { resolveShopifyTaxonomyCategory } from "./shopify-taxonomy.server";
 
 type AdminClient = {
@@ -22,6 +23,7 @@ export type SyncResult = {
   title: string;
   variants: number;
   images: number;
+  videos: number;
   category: string | null;
   metafieldErrors: string[];
   action: "created_or_updated";
@@ -105,9 +107,21 @@ function normalizedVariants(product: ParsedMarketplaceProduct, settings: SyncSet
     .filter((variant) => variant.quantity > 0);
 }
 
-function isMirroredImage(url: string) {
+function isMirroredMedia(url: string) {
   return /\/storage\/v1\/object\/public\/parservo-media\//i.test(url)
     || /cdn\.shopify\.com/i.test(url);
+}
+
+function safeMediaFilename(handle: string, type: "image" | "video", position: number, url: string) {
+  let extension = type === "video" ? "mp4" : "jpg";
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(/\.([a-z0-9]{2,5})$/i);
+    if (match) extension = match[1].toLowerCase() === "jpeg" ? "jpg" : match[1].toLowerCase();
+  } catch {
+    // Use default extension.
+  }
+  return `${handle}-${type}-${position}.${extension}`;
 }
 
 async function setParserVoMetafields(
@@ -117,24 +131,9 @@ async function setParserVoMetafields(
 ) {
   const mapping = getProductMapping(product);
   const metafields = [
-    {
-      ownerId: productId,
-      namespace: "custom",
-      key: "name_type",
-      value: mapping.nameType,
-    },
-    {
-      ownerId: productId,
-      namespace: "custom",
-      key: "disclosures",
-      value: "Передзамовлення. Доставка з Європи.",
-    },
-    {
-      ownerId: productId,
-      namespace: "custom",
-      key: "link",
-      value: product.sourceUrl,
-    },
+    { ownerId: productId, namespace: "custom", key: "name_type", value: mapping.nameType },
+    { ownerId: productId, namespace: "custom", key: "disclosures", value: "Передзамовлення. Доставка з Європи." },
+    { ownerId: productId, namespace: "custom", key: "link", value: product.sourceUrl },
     {
       ownerId: productId,
       namespace: "parservo",
@@ -149,13 +148,7 @@ async function setParserVoMetafields(
       type: "single_line_text_field",
       value: String(product.supplierProductId || product.handle || ""),
     },
-    {
-      ownerId: productId,
-      namespace: "parservo",
-      key: "supplier_url",
-      type: "url",
-      value: product.sourceUrl,
-    },
+    { ownerId: productId, namespace: "parservo", key: "supplier_url", type: "url", value: product.sourceUrl },
   ].filter((entry) => String(entry.value || "").trim());
 
   const data = await graphql<{
@@ -208,15 +201,30 @@ export async function syncProductToShopify(
   const location = await resolveLocation(admin);
   if (!location) throw new Error("В Shopify не найдена активная локация для остатков.");
 
-  const { images } = splitMedia(product.media);
+  const { images, videos } = splitMedia(product.media);
   const validImages = images
-    .filter((item) => /^https?:\/\//i.test(item.url) && isMirroredImage(item.url))
+    .filter((item) => /^https?:\/\//i.test(item.url) && isMirroredMedia(item.url))
     .slice(0, 5);
-  const files = validImages.map((image, index) => ({
+  const validVideos = videos
+    .filter((item) => /^https?:\/\//i.test(item.url) && isMirroredMedia(item.url))
+    .slice(0, 1);
+
+  const files: Array<Record<string, unknown>> = validImages.map((image, index) => ({
     originalSource: image.url,
     alt: image.alt || `${productTitle(product)} ${index + 1}`,
+    filename: safeMediaFilename(handle, "image", index + 1, image.url),
     contentType: "IMAGE",
+    duplicateResolutionMode: "REPLACE",
   }));
+
+  for (let index = 0; index < validVideos.length; index += 1) {
+    files.push(await stageVideoForProductSet({
+      admin,
+      video: validVideos[index],
+      handle,
+      position: index + 1,
+    }));
+  }
 
   const descriptionHtml = product.descriptionHtml || buildDescriptionHtml(product);
   const input = {
@@ -238,9 +246,7 @@ export async function syncProductToShopify(
     productOptions: [{
       name: optionName,
       position: 1,
-      values: variants.map((variant) => ({
-        name: defaultVariant ? "Default Title" : variant.size,
-      })),
+      values: variants.map((variant) => ({ name: defaultVariant ? "Default Title" : variant.size })),
     }],
     ...(files.length ? { files } : {}),
     variants: variants.map((variant) => {
@@ -248,10 +254,7 @@ export async function syncProductToShopify(
       const sale = variant.salePriceUah ?? baseSale;
       const compareAt = variant.compareAtPriceUah ?? baseCompareAt;
       return {
-        optionValues: [{
-          optionName,
-          name: defaultVariant ? "Default Title" : variant.size,
-        }],
+        optionValues: [{ optionName, name: defaultVariant ? "Default Title" : variant.size }],
         sku: variant.sku || [product.supplierProductId, defaultVariant ? null : variant.size].filter(Boolean).join("-"),
         price: money(sale),
         compareAtPrice: compareAt && compareAt > sale ? money(compareAt) : null,
@@ -273,7 +276,12 @@ export async function syncProductToShopify(
 
   const data = await graphql<{
     productSet: {
-      product: { id: string; title: string; handle: string } | null;
+      product: {
+        id: string;
+        title: string;
+        handle: string;
+        media: { nodes: Array<{ id: string; mediaContentType: string; status: string }> };
+      } | null;
       userErrors: UserError[];
     };
   }>(
@@ -281,16 +289,17 @@ export async function syncProductToShopify(
     `#graphql
       mutation ParserVoUpsertProduct($input: ProductSetInput!, $identifier: ProductSetIdentifiers, $synchronous: Boolean!) {
         productSet(input: $input, identifier: $identifier, synchronous: $synchronous) {
-          product { id title handle }
+          product {
+            id
+            title
+            handle
+            media(first: 10) { nodes { id mediaContentType status } }
+          }
           userErrors { code field message }
         }
       }
     `,
-    {
-      input,
-      identifier: { handle },
-      synchronous: true,
-    },
+    { input, identifier: { handle }, synchronous: true },
   );
 
   throwUserErrors("Shopify sync failed", data.productSet.userErrors);
@@ -304,6 +313,7 @@ export async function syncProductToShopify(
     title: data.productSet.product.title,
     variants: variants.length,
     images: validImages.length,
+    videos: validVideos.length,
     category: taxonomy.matchedFullName || taxonomy.requestedFullName || null,
     metafieldErrors,
     action: "created_or_updated",
