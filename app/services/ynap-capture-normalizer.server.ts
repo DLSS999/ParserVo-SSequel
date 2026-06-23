@@ -4,6 +4,11 @@ import type {
   SourceMediaItem,
 } from "./media.server";
 import { calculatePricing } from "./pricing.server";
+import {
+  buildDescriptionHtml,
+  cleanSupplierDescription,
+  getProductMapping,
+} from "./product-mapping.server";
 import { browserCategories } from "./ynap-browser-config.server";
 
 export type CapturedSize = {
@@ -90,7 +95,7 @@ function normalizeTitle(title: string, brand: string) {
 }
 
 function normalizeSize(value: string) {
-  let clean = String(value || "")
+  const clean = String(value || "")
     .replace(/^size\s*/i, "")
     .replace(/\s*[-–—:]\s*(sold out|low stock|only \d+ left|last one|unavailable|out of stock).*$/i, "")
     .replace(/^(EU|UK|US)\s+/i, "")
@@ -126,7 +131,11 @@ function mappedQuantity(size: CapturedSize) {
   return 5;
 }
 
-function normalizeVariants(capture: YnapBrowserCapture, productCode: string, pricing: ReturnType<typeof calculatePricing>) {
+function normalizeVariants(
+  capture: YnapBrowserCapture,
+  productCode: string,
+  pricing: ReturnType<typeof calculatePricing>,
+) {
   const bySize = new Map<string, ParsedMarketplaceVariant>();
 
   for (const item of capture.sizes || []) {
@@ -232,6 +241,7 @@ export function normalizeYnapCapture(capture: YnapBrowserCapture): NormalizedYna
   const title = normalizeTitle(capture.title, brand);
   const variants = normalizeVariants(capture, productCode, pricing);
   const media = normalizeMedia(capture.media || []);
+  const cleanedDescription = cleanSupplierDescription(capture.descriptionHtml || capture.description);
 
   const product: ParsedMarketplaceProduct = {
     handle,
@@ -261,11 +271,16 @@ export function normalizeYnapCapture(capture: YnapBrowserCapture): NormalizedYna
       brand,
       "Imported by ParserVo",
     ],
-    description: capture.description || null,
-    descriptionHtml: capture.descriptionHtml || null,
+    description: cleanedDescription || null,
+    descriptionHtml: null,
     composition: capture.composition || null,
     media,
   };
+
+  const mapping = getProductMapping(product);
+  product.productType = mapping.productType;
+  product.productCategory = mapping.taxonomyPath;
+  product.descriptionHtml = buildDescriptionHtml(product);
 
   return {
     product,
