@@ -1,6 +1,8 @@
 import type { ParsedMarketplaceProduct, ParsedMarketplaceVariant } from "./media.server";
 import { splitMedia } from "./media.server";
 import { calculatePricing, sortSizesForShopify } from "./pricing.server";
+import { buildDescriptionHtml, getProductMapping } from "./product-mapping.server";
+import { resolveShopifyTaxonomyCategory } from "./shopify-taxonomy.server";
 
 type AdminClient = {
   graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
@@ -20,6 +22,8 @@ export type SyncResult = {
   title: string;
   variants: number;
   images: number;
+  category: string | null;
+  metafieldErrors: string[];
   action: "created_or_updated";
 };
 
@@ -101,7 +105,85 @@ function normalizedVariants(product: ParsedMarketplaceProduct, settings: SyncSet
     .filter((variant) => variant.quantity > 0);
 }
 
-export async function syncProductToShopify(admin: AdminClient, product: ParsedMarketplaceProduct, settings: SyncSettings): Promise<SyncResult> {
+function isMirroredImage(url: string) {
+  return /\/storage\/v1\/object\/public\/parservo-media\//i.test(url)
+    || /cdn\.shopify\.com/i.test(url);
+}
+
+async function setParserVoMetafields(
+  admin: AdminClient,
+  productId: string,
+  product: ParsedMarketplaceProduct,
+) {
+  const mapping = getProductMapping(product);
+  const metafields = [
+    {
+      ownerId: productId,
+      namespace: "custom",
+      key: "name_type",
+      value: mapping.nameType,
+    },
+    {
+      ownerId: productId,
+      namespace: "custom",
+      key: "disclosures",
+      value: "Передзамовлення. Доставка з Європи.",
+    },
+    {
+      ownerId: productId,
+      namespace: "custom",
+      key: "link",
+      value: product.sourceUrl,
+    },
+    {
+      ownerId: productId,
+      namespace: "parservo",
+      key: "supplier_name",
+      type: "single_line_text_field",
+      value: product.source === "NET_A_PORTER" ? "NET-A-PORTER" : "MR PORTER",
+    },
+    {
+      ownerId: productId,
+      namespace: "parservo",
+      key: "supplier_product_id",
+      type: "single_line_text_field",
+      value: String(product.supplierProductId || product.handle || ""),
+    },
+    {
+      ownerId: productId,
+      namespace: "parservo",
+      key: "supplier_url",
+      type: "url",
+      value: product.sourceUrl,
+    },
+  ].filter((entry) => String(entry.value || "").trim());
+
+  const data = await graphql<{
+    metafieldsSet: {
+      metafields: Array<{ id: string; namespace: string; key: string }>;
+      userErrors: UserError[];
+    };
+  }>(
+    admin,
+    `#graphql
+      mutation ParserVoSetProductMetafields($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields { id namespace key }
+          userErrors { code field message }
+        }
+      }
+    `,
+    { metafields },
+  );
+
+  return (data.metafieldsSet.userErrors || []).map((error) => error.message);
+}
+
+export async function syncProductToShopify(
+  admin: AdminClient,
+  product: ParsedMarketplaceProduct,
+  settings: SyncSettings,
+): Promise<SyncResult> {
   const handle = productHandle(product);
   const variants = normalizedVariants(product, settings);
   if (!variants.length) throw new Error(`Товар ${productTitle(product)} пропущен: нет размеров в наличии.`);
@@ -116,54 +198,60 @@ export async function syncProductToShopify(admin: AdminClient, product: ParsedMa
     compareAtEnabled: true,
   });
 
+  const mapping = getProductMapping(product);
+  const taxonomy = await resolveShopifyTaxonomyCategory(admin, product);
   const baseCost = product.pricing?.costPriceUah ?? calculated.costPriceUah;
   const baseSale = product.pricing?.salePriceUah ?? calculated.salePriceUah;
   const baseCompareAt = product.pricing?.compareAtPriceUah ?? calculated.compareAtPriceUah;
-  const defaultVariant = variants.length === 1 && variants[0].size === "Default Title";
-  const optionName = defaultVariant ? "Title" : "Size";
+  const defaultVariant = variants.length === 1 && ["DEFAULT TITLE", "ONE SIZE", "OS"].includes(variants[0].size.toUpperCase());
+  const optionName = defaultVariant ? "Title" : "Розмір";
   const location = await resolveLocation(admin);
   if (!location) throw new Error("В Shopify не найдена активная локация для остатков.");
 
   const { images } = splitMedia(product.media);
-  const validImages = images.filter((item) => /^https?:\/\//i.test(item.url)).slice(0, 5);
+  const validImages = images
+    .filter((item) => /^https?:\/\//i.test(item.url) && isMirroredImage(item.url))
+    .slice(0, 5);
   const files = validImages.map((image, index) => ({
     originalSource: image.url,
     alt: image.alt || `${productTitle(product)} ${index + 1}`,
     contentType: "IMAGE",
   }));
 
-  const descriptionHtml = product.descriptionHtml || [
-    product.description ? `<p>${product.description}</p>` : "",
-    product.composition ? `<p><strong>Composition:</strong> ${product.composition}</p>` : "",
-    product.color ? `<p><strong>Color:</strong> ${product.color}</p>` : "",
-  ].filter(Boolean).join("\n");
-
+  const descriptionHtml = product.descriptionHtml || buildDescriptionHtml(product);
   const input = {
     title: productTitle(product),
     handle,
-    descriptionHtml: `${descriptionHtml}<p><strong>Source:</strong> ${product.sourceUrl}</p>`,
+    descriptionHtml,
     vendor: product.brand,
-    productType: product.productType || product.category,
+    productType: mapping.productType,
     status: "DRAFT",
     tags: Array.from(new Set([
       ...(product.tags || []),
       product.source === "NET_A_PORTER" ? "NET-A-PORTER" : "MR PORTER",
       product.gender === "WOMEN" ? "Women" : "Men",
+      mapping.productType,
       "Imported by ParserVo",
       "Preorder",
     ])),
+    ...(taxonomy.id ? { category: taxonomy.id } : {}),
     productOptions: [{
       name: optionName,
       position: 1,
-      values: variants.map((variant) => ({ name: variant.size })),
+      values: variants.map((variant) => ({
+        name: defaultVariant ? "Default Title" : variant.size,
+      })),
     }],
-    files,
+    ...(files.length ? { files } : {}),
     variants: variants.map((variant) => {
       const cost = variant.costPriceUah ?? baseCost;
       const sale = variant.salePriceUah ?? baseSale;
       const compareAt = variant.compareAtPriceUah ?? baseCompareAt;
       return {
-        optionValues: [{ optionName, name: variant.size }],
+        optionValues: [{
+          optionName,
+          name: defaultVariant ? "Default Title" : variant.size,
+        }],
         sku: variant.sku || [product.supplierProductId, defaultVariant ? null : variant.size].filter(Boolean).join("-"),
         price: money(sale),
         compareAtPrice: compareAt && compareAt > sale ? money(compareAt) : null,
@@ -208,17 +296,25 @@ export async function syncProductToShopify(admin: AdminClient, product: ParsedMa
   throwUserErrors("Shopify sync failed", data.productSet.userErrors);
   if (!data.productSet.product) throw new Error("Shopify не вернул созданный или обновлённый товар.");
 
+  const metafieldErrors = await setParserVoMetafields(admin, data.productSet.product.id, product);
+
   return {
     handle,
     productId: data.productSet.product.id,
     title: data.productSet.product.title,
     variants: variants.length,
     images: validImages.length,
+    category: taxonomy.matchedFullName || taxonomy.requestedFullName || null,
+    metafieldErrors,
     action: "created_or_updated",
   };
 }
 
-export async function syncCatalogToShopify(admin: AdminClient, products: ParsedMarketplaceProduct[], settings: SyncSettings) {
+export async function syncCatalogToShopify(
+  admin: AdminClient,
+  products: ParsedMarketplaceProduct[],
+  settings: SyncSettings,
+) {
   const results: SyncResult[] = [];
   const errors: Array<{ handle: string; message: string }> = [];
 
