@@ -134,8 +134,6 @@ export async function stageVideoForProductSet(input: {
   return {
     originalSource: target.resourceUrl,
     alt: input.video.alt || null,
-    filename,
     contentType: "VIDEO",
-    duplicateResolutionMode: "REPLACE",
   };
 }
