@@ -32,6 +32,15 @@ function safePart(value: string, fallback: string) {
 }
 
 function extensionFor(contentType: string, filename?: string | null) {
+  const mime = String(contentType || "").toLowerCase();
+  if (mime.includes("png")) return "png";
+  if (mime.includes("webp")) return "webp";
+  if (mime.includes("avif")) return "avif";
+  if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
+  if (mime.includes("webm")) return "webm";
+  if (mime.includes("quicktime")) return "mov";
+  if (mime.includes("mp4")) return "mp4";
+
   const lower = String(filename || "").toLowerCase();
   const fileMatch = lower.match(/\.([a-z0-9]{2,5})(?:$|\?)/i);
   if (fileMatch) {
@@ -41,14 +50,7 @@ function extensionFor(contentType: string, filename?: string | null) {
     }
   }
 
-  const mime = String(contentType || "").toLowerCase();
-  if (mime.includes("png")) return "png";
-  if (mime.includes("webp")) return "webp";
-  if (mime.includes("avif")) return "avif";
-  if (mime.includes("webm")) return "webm";
-  if (mime.includes("quicktime")) return "mov";
-  if (mime.startsWith("video/")) return "mp4";
-  return "jpg";
+  return mime.startsWith("video/") ? "mp4" : "jpg";
 }
 
 function encodePath(path: string) {
