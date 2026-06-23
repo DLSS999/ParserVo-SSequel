@@ -3,6 +3,7 @@ import {
   recordBrowserHeartbeat,
   verifyBrowserCaptureKey,
 } from "../services/browser-capture.server";
+import { markCrawlLinkSuccess } from "../services/crawl-link-queue.server";
 import {
   normalizeYnapCapture,
   type YnapBrowserCapture,
@@ -43,6 +44,7 @@ export async function action({ request }: ActionFunctionArgs) {
       token?: string;
       agentId?: string;
       version?: string;
+      linkId?: string;
       capture?: YnapBrowserCapture;
     };
 
@@ -74,6 +76,13 @@ export async function action({ request }: ActionFunctionArgs) {
       });
     } catch (error) {
       shopifyError = error instanceof Error ? error.message : String(error);
+    }
+
+    if (payload.linkId) {
+      await markCrawlLinkSuccess({
+        linkId: payload.linkId,
+        productHandle: stored.handle,
+      });
     }
 
     await recordBrowserHeartbeat({
