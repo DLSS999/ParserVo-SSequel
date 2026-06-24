@@ -5,7 +5,6 @@ import type {
 } from "./media.server";
 import { calculatePricing } from "./pricing.server";
 import {
-  buildDescriptionHtml,
   cleanSupplierDescription,
   getProductMapping,
 } from "./product-mapping.server";
@@ -24,6 +23,9 @@ export type CapturedMedia = {
   url?: string;
   alt?: string;
   type?: "image" | "video";
+  originalUrl?: string;
+  contentType?: string;
+  byteLength?: number;
 };
 
 export type YnapBrowserCapture = {
@@ -96,30 +98,31 @@ function normalizeTitle(title: string, brand: string) {
 
 function normalizeSize(value: string) {
   const clean = String(value || "")
-    .replace(/^size\s*/i, "")
+    .replace(/^size\s*:?\s*/i, "")
     .replace(/\s*[-–—:]\s*(sold out|low stock|only \d+ left|last one|unavailable|out of stock).*$/i, "")
-    .replace(/^(EU|UK|US)\s+/i, "")
-    .trim();
+    .replace(/\s+/g, "")
+    .trim()
+    .toUpperCase();
 
   const map: Array<[RegExp, string]> = [
-    [/^(xxx\s*small|3xs)$/i, "XXXS"],
-    [/^(xx\s*small|2xs)$/i, "XXS"],
-    [/^(x\s*small|xs)$/i, "XS"],
-    [/^(small|s)$/i, "S"],
-    [/^(medium|m)$/i, "M"],
-    [/^(large|l)$/i, "L"],
-    [/^(x\s*large|xl)$/i, "XL"],
-    [/^(xx\s*large|2xl|xxl)$/i, "2XL"],
-    [/^(xxx\s*large|3xl|xxxl)$/i, "3XL"],
-    [/^(one\s*size|os)$/i, "ONE SIZE"],
+    [/^(XXXSMALL|3XS)$/i, "XXXS"],
+    [/^(XXSMALL|2XS)$/i, "XXS"],
+    [/^(XSMALL|XS)$/i, "XS"],
+    [/^(SMALL|S)$/i, "S"],
+    [/^(MEDIUM|M)$/i, "M"],
+    [/^(LARGE|L)$/i, "L"],
+    [/^(XLARGE|XL)$/i, "XL"],
+    [/^(XXLARGE|2XL|XXL)$/i, "2XL"],
+    [/^(XXXLARGE|3XL|XXXL)$/i, "3XL"],
+    [/^(ONESIZE|OS)$/i, "ONE SIZE"],
   ];
 
   for (const [pattern, normalized] of map) {
     if (pattern.test(clean)) return normalized;
   }
-
+  if (/^(IT|EU|FR|UK|US)\d{1,3}(?:\.5)?$/.test(clean)) return clean;
   if (/^\d{1,3}(?:\.5)?$/.test(clean)) return clean;
-  if (/^[A-Z]{1,5}$/.test(clean.toUpperCase())) return clean.toUpperCase();
+  if (/^[A-Z]{1,5}$/.test(clean)) return clean;
   return null;
 }
 
@@ -137,7 +140,6 @@ function normalizeVariants(
   pricing: ReturnType<typeof calculatePricing>,
 ) {
   const bySize = new Map<string, ParsedMarketplaceVariant>();
-
   for (const item of capture.sizes || []) {
     const size = normalizeSize(String(item.size || item.text || ""));
     if (!size) continue;
@@ -147,7 +149,7 @@ function normalizeVariants(
       quantity,
       available: quantity > 0,
       position: bySize.size + 1,
-      sku: `${productCode}-${size}`,
+      sku: `${productCode}-${size.replace(/\s+/g, "-")}`,
       costPriceUah: pricing.costPriceUah,
       salePriceUah: pricing.salePriceUah,
       compareAtPriceUah: pricing.compareAtPriceUah,
@@ -173,14 +175,26 @@ function normalizeVariants(
   }));
 }
 
-function normalizeMedia(rows: CapturedMedia[]) {
+function exactSourceMedia(row: CapturedMedia, productCode: string) {
+  const source = String(row.originalUrl || row.url || "");
+  let decoded = source;
+  try { decoded = decodeURIComponent(source); } catch { /* keep source */ }
+  if (row.type === "video") {
+    return decoded.includes(`/variants/videos/${productCode}/`);
+  }
+  return decoded.includes(`/variants/images/${productCode}/`);
+}
+
+function normalizeMedia(rows: CapturedMedia[], productCode: string) {
   const seen = new Set<string>();
   const all: SourceMediaItem[] = [];
 
   for (const row of rows || []) {
     const url = String(row.url || "").trim();
     if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
-    if (/logo|icon|sprite|flag|newsletter/i.test(url)) continue;
+    if (!exactSourceMedia(row, productCode)) continue;
+    if (row.type !== "video" && Number(row.byteLength || 0) > 0 && Number(row.byteLength) < 5000) continue;
+    if (/teads|doubleclick|tracking|analytics|\/content\/images\/cms\//i.test(String(row.originalUrl || ""))) continue;
     seen.add(url);
     all.push({
       type: row.type === "video" ? "video" : "image",
@@ -192,10 +206,39 @@ function normalizeMedia(rows: CapturedMedia[]) {
 
   const images = all.filter((item) => item.type === "image").slice(0, 5);
   const video = all.find((item) => item.type === "video");
+  if (!images.length) {
+    throw new Error(`No exact product images were captured for ${productCode}.`);
+  }
   return [
-    ...images,
+    ...images.map((item, index) => ({ ...item, position: index + 1 })),
     ...(video ? [{ ...video, position: images.length + 1 }] : []),
   ];
+}
+
+function cleanComposition(value: unknown) {
+  const clean = String(value || "").replace(/\s+/g, " ").trim();
+  if (!clean || /sale|promotion|discount|order|delivery|net-a-porter|mr porter/i.test(clean)) return "";
+  return clean;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function exactDescriptionHtml(value: string) {
+  const clean = cleanSupplierDescription(value);
+  if (!clean) return null;
+  return clean
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+    .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`)
+    .join("\n");
 }
 
 export function normalizeYnapCapture(capture: YnapBrowserCapture): NormalizedYnapCapture {
@@ -206,7 +249,6 @@ export function normalizeYnapCapture(capture: YnapBrowserCapture): NormalizedYna
   if (!/(net-a-porter\.com|mrporter\.com)$/i.test(sourceUrl.hostname)) {
     throw new Error("Invalid NET-A-PORTER / MR PORTER URL.");
   }
-
   if (capture.source !== config.source || capture.gender !== config.gender) {
     throw new Error("Captured source does not match the queued category.");
   }
@@ -216,6 +258,9 @@ export function normalizeYnapCapture(capture: YnapBrowserCapture): NormalizedYna
     throw new Error(`Brand outside configured filter: ${brand || "empty"}`);
   }
 
+  if (typeof capture.price === "string" && /delivery|shipping|orders?|free standard|% off/i.test(capture.price)) {
+    throw new Error("Rejected promotional text instead of the product price.");
+  }
   const supplierPrice = numberValue(capture.price);
   if (!supplierPrice || supplierPrice > 2000) {
     throw new Error(`Price outside configured range: ${supplierPrice}`);
@@ -227,7 +272,7 @@ export function normalizeYnapCapture(capture: YnapBrowserCapture): NormalizedYna
     supplierPrice,
     supplierOldPrice: compareAtPrice,
     currency,
-    eurRate: numberValue(capture.rates?.eur) || 45,
+    eurRate: numberValue(capture.rates?.eur) || 55,
     plnRate: numberValue(capture.rates?.pln) || 12.19,
     compareAtEnabled: true,
   });
@@ -240,8 +285,8 @@ export function normalizeYnapCapture(capture: YnapBrowserCapture): NormalizedYna
   const handle = slug(`${productSlug}-${productCode}`);
   const title = normalizeTitle(capture.title, brand);
   const variants = normalizeVariants(capture, productCode, pricing);
-  const media = normalizeMedia(capture.media || []);
-  const cleanedDescription = cleanSupplierDescription(capture.descriptionHtml || capture.description);
+  const media = normalizeMedia(capture.media || [], productCode);
+  const description = cleanSupplierDescription(capture.descriptionHtml || capture.description);
 
   const product: ParsedMarketplaceProduct = {
     handle,
@@ -256,7 +301,7 @@ export function normalizeYnapCapture(capture: YnapBrowserCapture): NormalizedYna
     price: supplierPrice,
     compareAtPrice,
     currency,
-    color: capture.color || null,
+    color: String(capture.color || "").trim() || null,
     sizes: variants.map((variant) => variant.size),
     variants,
     pricing: {
@@ -264,23 +309,16 @@ export function normalizeYnapCapture(capture: YnapBrowserCapture): NormalizedYna
       salePriceUah: pricing.salePriceUah,
       compareAtPriceUah: pricing.compareAtPriceUah,
     },
-    tags: [
-      capture.source === "NET_A_PORTER" ? "NET-A-PORTER" : "MR PORTER",
-      capture.gender === "WOMEN" ? "Women" : "Men",
-      capture.category,
-      brand,
-      "Imported by ParserVo",
-    ],
-    description: cleanedDescription || null,
-    descriptionHtml: null,
-    composition: capture.composition || null,
+    tags: [capture.gender === "WOMEN" ? "Women" : "Men", brand],
+    description: description || null,
+    descriptionHtml: exactDescriptionHtml(description),
+    composition: cleanComposition(capture.composition) || null,
     media,
   };
 
   const mapping = getProductMapping(product);
   product.productType = mapping.productType;
   product.productCategory = mapping.taxonomyPath;
-  product.descriptionHtml = buildDescriptionHtml(product);
 
   return {
     product,
