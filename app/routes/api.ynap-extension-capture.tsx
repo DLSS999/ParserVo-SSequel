@@ -12,7 +12,7 @@ import {
 } from "../services/ynap-capture-normalizer.server";
 import { storeYnapCapture } from "../services/ynap-catalog-store.server";
 import { createStoredAdminClient } from "../services/shopify-stored-admin.server";
-import { syncProductToShopify } from "../services/shopify-sync.server";
+import { syncProductToShopifyStrict } from "../services/shopify-sync-fixed.server";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,10 +25,7 @@ function response(data: unknown, status = 200) {
   return json(data, { status, headers: corsHeaders });
 }
 
-async function saveImportState(
-  handle: string,
-  patch: Record<string, unknown>,
-) {
+async function saveImportState(handle: string, patch: Record<string, unknown>) {
   await databaseAdminRequest(
     `parservo_products?handle=eq.${encodeURIComponent(handle)}`,
     {
@@ -48,7 +45,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
   return response({
     ok: true,
-    name: "ParserVo NET-A-PORTER / MR PORTER capture API",
+    name: "ParserVo strict NET-A-PORTER / MR PORTER capture API",
   });
 }
 
@@ -86,15 +83,24 @@ export async function action({ request }: ActionFunctionArgs) {
 
     try {
       const admin = await createStoredAdminClient(shop);
-      shopify = await syncProductToShopify(admin, normalized.product, {
+      shopify = await syncProductToShopifyStrict(admin, normalized.product, {
         eurRate: Number(payload.capture.rates?.eur || 55),
         plnRate: Number(payload.capture.rates?.pln || 12.19),
         defaultQuantity: 5,
       });
+      const warnings = Array.isArray(shopify?.metafieldErrors)
+        ? shopify.metafieldErrors.filter(Boolean)
+        : [];
+      if (warnings.length) {
+        console.warn("ParserVo Shopify field warnings", {
+          handle: stored.handle,
+          warnings,
+        });
+      }
       await saveImportState(stored.handle, {
         shopify_product_gid: shopify?.productId || null,
         import_status: "IMPORTED",
-        last_error: null,
+        last_error: warnings.length ? `Warnings: ${warnings.join(" | ")}`.slice(0, 4000) : null,
       });
     } catch (error) {
       shopifyError = error instanceof Error ? error.message : String(error);
