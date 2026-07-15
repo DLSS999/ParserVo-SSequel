@@ -127,8 +127,8 @@ export default function CrawlerPage() {
     <main className="pv-stack">
       <div className="pv-page-header">
         <div>
-          <h1>ParserVo NET-A-PORTER / MR PORTER Capture</h1>
-          <p>После одноразовой установки расширения все запуски выполняются только здесь.</p>
+          <h1>STONE ISLAND / PARSER CONTROL</h1>
+          <p>Управление источниками, очередью, прогрессом и импортом в Shopify.</p>
         </div>
         <div className="pv-header">
           <span className={`pv-pill ${data.queueReady ? "pv-pill-green" : "pv-pill-red"}`}>
@@ -147,7 +147,7 @@ export default function CrawlerPage() {
 
       <section className="pv-card">
         <div className="pv-header">
-          <h2 className="pv-title">Настройка расширения Chrome</h2>
+          <h2 className="pv-title">CAPTURE AGENT CONFIGURATION</h2>
           <span className={`pv-pill ${extensionOnline ? "pv-pill-green" : "pv-pill-red"}`}>
             {extensionOnline ? data.onlineAgent?.message || "Расширение готово" : "вставь настройки и нажми Test API"}
           </span>
@@ -174,7 +174,7 @@ export default function CrawlerPage() {
 
       <section className="pv-card">
         <div className="pv-header">
-          <h2 className="pv-title">Запустить парсинг</h2>
+          <h2 className="pv-title">START PARSING</h2>
           <span className={`pv-pill ${extensionOnline ? "pv-pill-green" : "pv-pill-red"}`}>
             {extensionOnline ? "готово" : "ожидание расширения"}
           </span>
@@ -197,7 +197,7 @@ export default function CrawlerPage() {
                       <input type="hidden" name="categoryId" value={category.id} />
                       <input name="maxProducts" type="number" min="0" step="1" defaultValue={category.id === "all" ? 0 : 5} title="0 = без лимита" />
                       <button className="pv-button pv-button-primary" type="submit" disabled={!data.queueReady || !extensionOnline}>
-                        {category.id === "all" ? "Скачать весь каталог" : "Запустить"}
+                        {category.id === "all" ? "PARSE FULL CATALOG" : "Запустить"}
                       </button>
                     </Form>
                   </td>
@@ -211,8 +211,8 @@ export default function CrawlerPage() {
 
       <section className="pv-card">
         <div className="pv-header">
-          <h2 className="pv-title">Очередь и прогресс</h2>
-          <button className="pv-button" type="button" onClick={() => revalidator.revalidate()}>Обновить</button>
+          <h2 className="pv-title">QUEUE / PROGRESS</h2>
+          <button className="pv-button" type="button" onClick={() => revalidator.revalidate()}>REFRESH</button>
         </div>
         <div className="pv-table-wrap">
           <table className="pv-table">

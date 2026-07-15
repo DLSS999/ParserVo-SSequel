@@ -60,10 +60,18 @@ export default function AppLayout() {
     <>
       {configReady ? <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key={apiKey} /> : null}
       <PolarisAppProvider i18n={i18n}>
-        <nav className="pv-app-nav">
-          <Link className={location.pathname === "/app" ? "active" : ""} to="/app">Каталог Shopify</Link>
-          <Link className={location.pathname.startsWith("/app/crawler") ? "active" : ""} to="/app/crawler">Парсер и очередь</Link>
-        </nav>
+        <header className="pv-shell-header">
+          <div className="pv-shipping-bar">PARSERVO / STONE ISLAND CATALOG SYSTEM</div>
+          <div className="pv-brand-row">
+            <div className="pv-brand-meta">SSEQUEL / SHOPIFY</div>
+            <div className="pv-wordmark">PARSERVO</div>
+            <div className="pv-brand-meta pv-brand-meta-right">STATUS / CONNECTED</div>
+          </div>
+          <nav className="pv-app-nav">
+            <Link className={location.pathname === "/app" ? "active" : ""} to="/app">CATALOG</Link>
+            <Link className={location.pathname.startsWith("/app/crawler") ? "active" : ""} to="/app/crawler">PARSER / QUEUE</Link>
+          </nav>
+        </header>
         <Outlet />
       </PolarisAppProvider>
     </>

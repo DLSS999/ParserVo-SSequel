@@ -240,7 +240,7 @@ export default function Dashboard() {
   return (
     <main className="pv-stack">
       <div className="pv-page-header">
-        <div><h1>ParserVo Import App</h1><p>{data.shop ? `Подключён магазин: ${data.shop}` : "Shopify API не подключён"}</p></div>
+        <div><h1>STONE ISLAND / CATALOG CONTROL</h1><p>{data.shop ? `Подключён магазин: ${data.shop}` : "Shopify API не подключён"}</p></div>
         <div className="pv-header">
           <span className={`pv-pill ${data.supabaseConnected ? "pv-pill-green" : "pv-pill-red"}`}>{data.supabaseConnected ? `Supabase: ${data.catalogCount}` : "Supabase fallback"}</span>
           <span className={`pv-pill ${data.configReady ? "pv-pill-green" : "pv-pill-red"}`}>{data.configReady ? "Shopify API connected" : "Setup required"}</span>
@@ -252,7 +252,7 @@ export default function Dashboard() {
       {data.supabaseError ? <div className="pv-alert pv-alert-error">Supabase: {data.supabaseError}</div> : null}
 
       <section className="pv-card">
-        <div className="pv-header"><h2 className="pv-title">Автоматическая синхронизация</h2><span className="pv-pill pv-pill-green">правило наличия 0 / 1 / 5</span></div>
+        <div className="pv-header"><h2 className="pv-title">CATALOG SYNCHRONIZATION</h2><span className="pv-pill pv-pill-green">правило наличия 0 / 1 / 5</span></div>
         <p className="pv-note">0 у поставщика — размер не передаётся. Ровно 1 — Shopify получает 1. Больше 1 или просто «в наличии» — Shopify получает 5.</p>
         <div className="pv-actions">
           <Form method="post">
@@ -260,19 +260,19 @@ export default function Dashboard() {
             <input type="hidden" name="eurRate" value={data.settings.eurRate} />
             <input type="hidden" name="plnRate" value={data.settings.plnRate} />
             <input type="hidden" name="quantity" value={data.settings.quantity} />
-            <button className="pv-button pv-button-primary" type="submit" disabled={!data.configReady}>Синхронизировать весь каталог сейчас</button>
+            <button className="pv-button pv-button-primary" type="submit" disabled={!data.configReady}>SYNC FULL CATALOG</button>
           </Form>
         </div>
       </section>
 
       <section className="pv-card">
-        <div className="pv-header"><h2 className="pv-title">Курс валют и режим автообновления</h2><span className="pv-pill pv-pill-green">редактируется</span></div>
+        <div className="pv-header"><h2 className="pv-title">CURRENCY / AUTOMATION</h2><span className="pv-pill pv-pill-green">редактируется</span></div>
         <Form method="get" className="pv-settings-grid">
           <label><span>EUR → UAH</span><input name="eur" type="number" min="0.01" step="0.01" defaultValue={data.settings.eurRate} /></label>
           <label><span>PLN → UAH</span><input name="pln" type="number" min="0.01" step="0.01" defaultValue={data.settings.plnRate} /></label>
           <label><span>Резервное количество</span><input name="qty" type="number" min="0" step="1" defaultValue={data.settings.quantity} /></label>
           <label className="pv-checkbox"><input name="autoSync" type="checkbox" defaultChecked={data.settings.autoSync} /> <span>Автоматически синхронизировать весь каталог каждые 5 минут, пока приложение открыто</span></label>
-          <button className="pv-button pv-button-primary" type="submit">Сохранить</button>
+          <button className="pv-button pv-button-primary" type="submit">SAVE SETTINGS</button>
         </Form>
       </section>
 
@@ -284,7 +284,7 @@ export default function Dashboard() {
       </section>
 
       <section className="pv-card">
-        <div className="pv-header"><h2 className="pv-title">Категории</h2><span className="pv-pill">парсинг + автоматическая выгрузка</span></div>
+        <div className="pv-header"><h2 className="pv-title">SOURCE CATEGORIES</h2><span className="pv-pill">парсинг + автоматическая выгрузка</span></div>
         <div className="pv-table-wrap"><table className="pv-table">
           <thead><tr><th>Источник</th><th>Категория</th><th>Страницы</th><th>Товары</th><th>Действие</th></tr></thead>
           <tbody>{data.categories.map((category) => (
@@ -300,7 +300,7 @@ export default function Dashboard() {
       </section>
 
       <section className="pv-card">
-        <div className="pv-header"><h2 className="pv-title">Каталог для Shopify</h2><span className="pv-pill pv-pill-green">upsert без дублей</span></div>
+        <div className="pv-header"><h2 className="pv-title">SHOPIFY CATALOG</h2><span className="pv-pill pv-pill-green">upsert без дублей</span></div>
         <div className="pv-table-wrap"><table className="pv-table">
           <thead><tr><th>Бренд</th><th>Название</th><th>Себестоимость</th><th>Цена</th><th>Старая цена</th><th>Размеры</th><th>Остатки Shopify</th><th>Медиа</th><th></th></tr></thead>
           <tbody>{data.products.map((product) => (
@@ -316,13 +316,13 @@ export default function Dashboard() {
       </section>
 
       <section className="pv-card">
-        <div className="pv-header"><h2 className="pv-title">Ручная коррекция остатков</h2><span className="pv-pill">Shopify inventory</span></div>
+        <div className="pv-header"><h2 className="pv-title">MANUAL INVENTORY CONTROL</h2><span className="pv-pill">Shopify inventory</span></div>
         <Form method="post" className="pv-settings-grid">
           <input type="hidden" name="intent" value="inventory" />
           <label><span>Shopify Product ID</span><input name="productId" placeholder="1234567890" /></label>
           <label><span>Количество на каждый размер</span><input name="quantity" type="number" min="0" step="1" defaultValue={data.settings.quantity} /></label>
           <input type="hidden" name="eurRate" value={data.settings.eurRate} /><input type="hidden" name="plnRate" value={data.settings.plnRate} />
-          <button className="pv-button pv-button-primary" type="submit" disabled={!data.configReady}>Обновить остатки</button>
+          <button className="pv-button pv-button-primary" type="submit" disabled={!data.configReady}>UPDATE INVENTORY</button>
         </Form>
       </section>
     </main>
