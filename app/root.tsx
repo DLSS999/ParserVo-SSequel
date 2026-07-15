@@ -1,22 +1,25 @@
-import type { LinksFunction, MetaFunction } from "@remix-run/node";
-import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "@remix-run/react";
-import polarisStyles from "@shopify/polaris/build/esm/styles.css";
-import dashboardStyles from "./styles/dashboard.css";
+import type { LinksFunction } from "react-router";
+import {
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+} from "react-router";
 
-export const links: LinksFunction = () => [
-  { rel: "stylesheet", href: polarisStyles },
-  { rel: "stylesheet", href: dashboardStyles },
-];
+import stylesheet from "./styles.css?url";
 
-export const meta: MetaFunction = () => [
-  { title: "ParserVo" },
-  { name: "viewport", content: "width=device-width,initial-scale=1" },
-];
+export const links: LinksFunction = () => [{ rel: "stylesheet", href: stylesheet }];
 
-export default function Root() {
+export default function App() {
   return (
-    <html lang="ru">
-      <head><Meta /><Links /></head>
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <Meta />
+        <Links />
+      </head>
       <body>
         <Outlet />
         <ScrollRestoration />

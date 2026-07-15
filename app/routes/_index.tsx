@@ -1,9 +1,10 @@
-import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
+﻿import type { LoaderFunctionArgs } from "react-router";
+import { redirect } from "react-router";
 
-export async function loader({ request }: LoaderFunctionArgs) {
+export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   return redirect(`/app${url.search}`);
-}
+};
 
 export default function Index() {
   return null;

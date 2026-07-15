@@ -1,0 +1,35 @@
+﻿
+FullName                                                                                  
+--------                                                                                  
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\db.server.ts                         
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\root.tsx                             
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes.ts                            
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\shopify.server.ts                    
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\styles.css                           
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\api.import-queue.tsx          
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\api.stock-refresh-queue.tsx   
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\api.vitkac-capture.tsx        
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\app.excel-import.tsx          
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\app.import.tsx                
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\app.logs.tsx                  
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\app.products.tsx              
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\app.settings.tsx              
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\app.stock-sync.tsx            
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\app.tsx                       
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\app._index.tsx                
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\auth.$.tsx                    
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\webhooks.app.scopes_update.tsx
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\webhooks.app.uninstalled.tsx  
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\_index.tsx                    
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\auth.login\error.server.tsx   
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\routes\auth.login\route.tsx          
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\services\pricing.server.ts           
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\services\shopify-products.server.ts  
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\services\shopify-taxonomy.server.ts  
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\services\spreadsheet.server.ts       
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\services\status.ts                   
+C:\Users\user\ParserVo CINQ\supplier-import-sync\app\services\vitkac.server.ts            
+C:\Users\user\ParserVo CINQ\supplier-import-sync\prisma\dev.sqlite                        
+C:\Users\user\ParserVo CINQ\supplier-import-sync\prisma\schema.prisma                     
+
+

@@ -1,3 +1,0 @@
-export type SourceCategoryConfig = { id:string; source:"NET_A_PORTER"|"MR_PORTER"; gender:"WOMEN"|"MEN"; category:string; url:string; pages:number; expectedResults:number };
-export type ParsedProduct = { source:string; gender:string; category:string; brand?:string; title:string; price?:number; compareAtPrice?:number; currency:string; color?:string; sizes?:string[]; description?:string; composition?:string; sku?:string; sourceUrl:string; imageUrls:string[] };
-export interface MarketplaceAdapter { collectProductLinks(config: SourceCategoryConfig): Promise<string[]>; parseProduct(url:string, config:SourceCategoryConfig): Promise<ParsedProduct>; }

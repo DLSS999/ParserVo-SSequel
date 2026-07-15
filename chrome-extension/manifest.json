@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "ParserVo Vitkac Capture",
+  "version": "1.2.1",
+  "description": "Captures Vitkac product HTML and sends it to the ParserVo Shopify app. Supports automatic Excel queue import, Shopify product transfer workflow, and stock refresh for imported products.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://www.vitkac.com/*",
+    "https://vitkac.com/*",
+    "https://*.vitkac.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://localhost/*",
+    "https://127.0.0.1/*",
+    "https://*.trycloudflare.com/*",
+    "https://admin.shopify.com/*",
+    "https://*.myshopify.com/*",
+    "https://*.vercel.app/*",
+    "https://*.ngrok-free.app/*",
+    "https://*.ngrok.io/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Capture Vitkac product",
+    "default_popup": "popup.html"
+  }
+}
