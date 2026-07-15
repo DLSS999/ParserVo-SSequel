@@ -1,1 +1,48 @@
-{"type":"module","name":"parservo-shopify-app","private":true,"scripts":{"dev":"shopify app dev","build":"remix build","start":"remix-serve build","postinstall":"prisma generate","worker":"tsx workers/parser.worker.ts","crawl:catalog":"tsx scripts/crawl-ynap.ts","sync:shopify":"tsx scripts/sync-shopify.ts"},"engines":{"node":">=20.10 <23"},"dependencies":{"@prisma/client":"^6.16.2","@remix-run/node":"2.17.5","@remix-run/react":"2.17.5","@remix-run/serve":"2.17.5","@shopify/app-bridge-react":"^4.2.4","@shopify/polaris":"13.9.5","@shopify/shopify-api":"13.0.0","@shopify/shopify-app-remix":"4.2.0","@shopify/shopify-app-session-storage-memory":"6.0.0","bullmq":"latest","ioredis":"latest","isbot":"latest","playwright":"latest","prisma":"^6.16.2","react":"18.3.1","react-dom":"18.3.1","sharp":"latest","zod":"latest"},"devDependencies":{"@remix-run/dev":"2.17.5","@types/node":"latest","@types/react":"latest","@types/react-dom":"latest","tsx":"latest","typescript":"latest"}}
+{
+  "type": "module",
+  "name": "parservo-shopify-app",
+  "private": true,
+  "scripts": {
+    "dev": "shopify app dev",
+    "build": "remix build",
+    "start": "remix-serve build",
+    "postinstall": "prisma generate",
+    "worker": "tsx workers/parser.worker.ts",
+    "crawl:catalog": "tsx scripts/crawl-ynap.ts",
+    "sync:shopify": "tsx scripts/sync-shopify.ts",
+    "typecheck": "tsc --noEmit",
+    "crawl:ynap": "tsx scripts/crawl-ynap.ts",
+    "crawl:stone-island": "tsx scripts/crawl-stone-island.ts"
+  },
+  "engines": {
+    "node": ">=20.10 <23"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.2",
+    "@remix-run/node": "2.17.5",
+    "@remix-run/react": "2.17.5",
+    "@remix-run/serve": "2.17.5",
+    "@shopify/app-bridge-react": "^4.2.4",
+    "@shopify/polaris": "13.9.5",
+    "@shopify/shopify-api": "13.0.0",
+    "@shopify/shopify-app-remix": "4.2.0",
+    "@shopify/shopify-app-session-storage-memory": "6.0.0",
+    "bullmq": "latest",
+    "ioredis": "latest",
+    "isbot": "latest",
+    "playwright": "latest",
+    "prisma": "^6.16.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "sharp": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@remix-run/dev": "2.17.5",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}
