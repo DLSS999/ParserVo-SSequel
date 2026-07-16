@@ -57,27 +57,44 @@ function uniqueTags(values: string[]) {
   return result;
 }
 
+function productSlug(value: string | null | undefined) {
+  try {
+    const lastSegment = decodeURIComponent(
+      new URL(String(value || "")).pathname.split("/").filter(Boolean).pop() || "",
+    );
+    return lastSegment
+      .replace(/\.html?$/i, "")
+      .replace(/[-_]+/g, " ")
+      .trim();
+  } catch {
+    return "";
+  }
+}
+
 export function getCorrectProductMapping(product: ParsedMarketplaceProduct) {
-  const productFacts = ` ${[
+  // Only facts belonging to the concrete product are allowed to decide its
+  // precise class. Do not include previously calculated productType/category
+  // here: broad Stone Island paths such as "polos-and-t-shirts" and
+  // "trousers-and-shorts" otherwise overwrite the real product type.
+  const exactFacts = ` ${[
     product.title,
     product.description,
     product.descriptionHtml,
     product.composition,
-    product.productType,
-    product.productCategory,
+    productSlug(product.sourceUrl),
   ].filter(Boolean).join(" ")} `.toLowerCase();
 
   const source = ` ${[
-    productFacts,
+    exactFacts,
+    product.productType,
+    product.productCategory,
     product.category,
     product.sourceUrl,
   ].filter(Boolean).join(" ")} `.toLowerCase();
 
-  // A Stone Island catalog path can contain "polos-and-t-shirts" for both
-  // product classes. The product description/title must win over that broad
-  // path, otherwise ordinary T-shirts are incorrectly assigned to Polos.
-  if (/\b(?:t[ -]?shirts?|tee shirts?|tees?)\b|футболк/.test(productFacts)
-      && !/\b(?:polo shirts?|polos?)\b|поло/.test(productFacts)) {
+  const isExplicitPolo = /\b(?:polo(?:\s+shirts?)?|polos?)\b|поло/.test(exactFacts);
+  const isExplicitTshirt = /\b(?:t[\s-]?shirts?|tee(?:\s+shirts?)?|tees?)\b|футболк/.test(exactFacts);
+  if (isExplicitTshirt && !isExplicitPolo) {
     return {
       kind: "tshirt" as const,
       productType: "Футболки",
@@ -86,11 +103,21 @@ export function getCorrectProductMapping(product: ParsedMarketplaceProduct) {
     };
   }
 
+  const isExplicitTrousers = /\b(?:cargo\s+)?trousers?\b|\bpants?\b|брюк|штани/.test(exactFacts);
+  if (isExplicitTrousers) {
+    return {
+      kind: "trousers" as const,
+      productType: "Брюки",
+      nameType: "Брюки",
+      taxonomyPath: "Apparel & Accessories > Clothing > Pants > Trousers",
+    };
+  }
+
   // Stone Island frequently omits the garment class from the visible title.
   // Use the supplier description before the broad source category so a
   // crewneck sweatshirt is not incorrectly classified as a hoodie.
-  if (/\b(?:crewneck|crew neck|sweatshirts?)\b|світшот/.test(source)
-      && !/\b(?:hoodie|hooded|zip[-\s]?hoodie)\b|худі/.test(source)) {
+  if (/\b(?:crewneck|crew neck|sweatshirts?)\b|світшот/.test(exactFacts)
+      && !/\b(?:hoodie|hooded|zip[-\s]?hoodie)\b|худі/.test(exactFacts)) {
     return {
       kind: "sweatshirt" as const,
       productType: "Світшоти",
