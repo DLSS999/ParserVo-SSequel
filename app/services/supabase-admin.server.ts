@@ -58,23 +58,26 @@ async function rest(path: string, init: RequestInit = {}) {
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    let response: Response;
     try {
-      const response = await fetch(`${url}/rest/v1/${path}`, {
+      response = await fetch(`${url}/rest/v1/${path}`, {
         ...init,
         headers: headers(key, (init.headers || {}) as Record<string, string>),
         cache: "no-store",
       });
-      const text = await response.text();
-      if (response.ok) return text ? JSON.parse(text) : null;
-
-      const error = new Error(`Supabase admin ${response.status}: ${text.slice(0, 500)}`);
-      lastError = error;
-      if (!retryable || !RETRYABLE_STATUS.has(response.status) || attempt >= RETRY_DELAYS_MS.length) throw error;
     } catch (error) {
       lastError = error;
       if (!retryable || attempt >= RETRY_DELAYS_MS.length) throw error;
+      await wait(RETRY_DELAYS_MS[attempt]);
+      continue;
     }
 
+    const text = await response.text();
+    if (response.ok) return text ? JSON.parse(text) : null;
+
+    const error = new Error(`Supabase admin ${response.status}: ${text.slice(0, 500)}`);
+    lastError = error;
+    if (!retryable || !RETRYABLE_STATUS.has(response.status) || attempt >= RETRY_DELAYS_MS.length) throw error;
     await wait(RETRY_DELAYS_MS[attempt]);
   }
 
