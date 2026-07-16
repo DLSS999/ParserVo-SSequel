@@ -49,8 +49,13 @@ function handleFor(product: ParsedMarketplaceProduct) {
     .slice(0, 255);
 }
 
+function normalizedVendor(product: ParsedMarketplaceProduct) {
+  const raw = String(product.brand || "").trim();
+  return raw.toUpperCase() === "STONE ISLAND" ? "Stone Island" : raw;
+}
+
 function titleFor(product: ParsedMarketplaceProduct) {
-  const brand = String(product.brand || "").trim();
+  const brand = normalizedVendor(product);
   const title = String(product.title || "").trim();
   return title.toUpperCase().startsWith(brand.toUpperCase()) ? title : `${brand} ${title}`.trim();
 }
@@ -190,21 +195,13 @@ function isSupportedPublicMediaUrl(urlValue: string) {
   try {
     const url = new URL(urlValue);
     if (url.protocol !== "https:" && url.protocol !== "http:") return false;
-
     const hostname = url.hostname.toLowerCase();
     const pathname = url.pathname.toLowerCase();
-
-    // ParserVo mirror and Shopify CDN.
     if (pathname.includes("/storage/v1/object/public/parservo-media/")) return true;
     if (hostname === "cdn.shopify.com" || hostname.endsWith(".cdn.shopify.com")) return true;
-
-    // Stone Island serves original product media from THRON. Shopify can import
-    // these public HTTPS files directly, so they must not be rejected merely
-    // because they were not copied to Supabase first.
     if (hostname === "stoneisland-cdn.thron.com" || hostname.endsWith(".thron.com")) {
       return pathname.includes("/delivery/public/image/stoneisland/");
     }
-
     return false;
   } catch {
     return false;
@@ -224,7 +221,6 @@ function imageFilename(handle: string, position: number, url: string) {
 
 async function setCustomFields(admin: AdminClient, productId: string, product: ParsedMarketplaceProduct) {
   const mapping = getCorrectProductMapping(product);
-  // These definitions already exist in this shop as single-line text fields.
   const metafields = [
     { ownerId: productId, namespace: "custom", key: "name_type", value: mapping.nameType },
     { ownerId: productId, namespace: "custom", key: "disclosures", value: "Передзамовлення. Доставка з Європи." },
@@ -280,8 +276,10 @@ export async function syncProductToShopifyStrict(
   if (!location) throw new Error("В Shopify не найдена активная локация для остатков.");
 
   const defaultVariant = variants.length === 1
-    && ["DEFAULT TITLE", "ONE SIZE", "OS"].includes(variants[0].size.toUpperCase());
-  const optionName = defaultVariant ? "Title" : "Розмір";
+    && ["DEFAULT TITLE"].includes(variants[0].size.toUpperCase());
+  const sizeOptionName = defaultVariant ? "Title" : "Розмір";
+  const color = String(product.color || "").replace(/^colou?r\s*:\s*/i, "").trim();
+  const hasColor = Boolean(color);
   const { images, videos } = splitMedia(product.media);
   const exactImages = images.filter((item) => isSupportedPublicMediaUrl(item.url)).slice(0, 5);
   const exactVideos = videos.filter((item) => isSupportedPublicMediaUrl(item.url)).slice(0, 1);
@@ -308,19 +306,29 @@ export async function syncProductToShopifyStrict(
     title: titleFor(product),
     handle,
     descriptionHtml: exactDescriptionHtml(product),
-    vendor: product.brand,
+    vendor: normalizedVendor(product),
     productType: mapping.productType,
     status: "DRAFT",
     tags: publicProductTags(product, mapping.productType),
     ...(taxonomy.id ? { category: taxonomy.id } : {}),
-    productOptions: [{
-      name: optionName,
-      position: 1,
-      values: variants.map((variant) => ({ name: defaultVariant ? "Default Title" : variant.size })),
-    }],
+    productOptions: [
+      {
+        name: sizeOptionName,
+        position: 1,
+        values: variants.map((variant) => ({ name: defaultVariant ? "Default Title" : variant.size })),
+      },
+      ...(hasColor ? [{
+        name: "Колір",
+        position: 2,
+        values: [{ name: color }],
+      }] : []),
+    ],
     files,
     variants: variants.map((variant) => ({
-      optionValues: [{ optionName, name: defaultVariant ? "Default Title" : variant.size }],
+      optionValues: [
+        { optionName: sizeOptionName, name: defaultVariant ? "Default Title" : variant.size },
+        ...(hasColor ? [{ optionName: "Колір", name: color }] : []),
+      ],
       sku: variant.sku || [product.supplierProductId, defaultVariant ? null : variant.size].filter(Boolean).join("-"),
       price: money(pricing.salePriceUah),
       compareAtPrice: pricing.compareAtPriceUah && pricing.compareAtPriceUah > pricing.salePriceUah
