@@ -1,4 +1,6 @@
 const DEFAULT_SUPABASE_URL = "https://cuzjuykyelzrvxxbcjry.supabase.co";
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
+const RETRY_DELAYS_MS = [250, 750, 1500];
 
 export type CrawlJobStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "PARTIAL" | "ERROR" | "CANCELLED";
 
@@ -53,19 +55,42 @@ function headers(key: string, prefer?: string) {
   return result;
 }
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function rest(path: string, init: RequestInit = {}) {
   const { url, key } = config();
-  const response = await fetch(`${url}/rest/v1/${path}`, {
-    ...init,
-    headers: {
-      ...headers(key),
-      ...((init.headers || {}) as Record<string, string>),
-    },
-    cache: "no-store",
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Supabase queue ${response.status}: ${text.slice(0, 500)}`);
-  return text ? JSON.parse(text) : null;
+  const method = String(init.method || "GET").toUpperCase();
+  const retryable = ["GET", "HEAD", "PUT", "PATCH", "DELETE"].includes(method);
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(`${url}/rest/v1/${path}`, {
+        ...init,
+        headers: {
+          ...headers(key),
+          ...((init.headers || {}) as Record<string, string>),
+        },
+        cache: "no-store",
+      });
+    } catch (error) {
+      lastError = error;
+      if (!retryable || attempt >= RETRY_DELAYS_MS.length) throw error;
+      await wait(RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+
+    const text = await response.text();
+    if (response.ok) return text ? JSON.parse(text) : null;
+
+    const error = new Error(`Supabase queue ${response.status}: ${text.slice(0, 500)}`);
+    lastError = error;
+    if (!retryable || !RETRYABLE_STATUS.has(response.status) || attempt >= RETRY_DELAYS_MS.length) throw error;
+    await wait(RETRY_DELAYS_MS[attempt]);
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Supabase queue request failed.");
 }
 
 export async function enqueueCrawlJob(input: {
