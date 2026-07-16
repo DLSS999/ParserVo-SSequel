@@ -46,7 +46,6 @@ function isStoneIslandCapture(capture: YnapBrowserCapture) {
   }
 }
 
-
 function normalizeCapture(capture: YnapBrowserCapture) {
   if (!isStoneIslandCapture(capture)) return normalizeYnapCapture(capture);
 
@@ -73,7 +72,7 @@ function normalizeCapture(capture: YnapBrowserCapture) {
     source: "MR_PORTER",
     gender: "MEN",
     category: capture.category || "Clothing",
-    brand: capture.brand || "STONE ISLAND",
+    brand: "Stone Island",
     productCode,
     currency: sourceCurrency === "PLN" ? "EUR" : sourceCurrency,
     price: strictPrice,
@@ -92,14 +91,19 @@ function normalizeCapture(capture: YnapBrowserCapture) {
   normalized.sourcePayload = capture;
   normalized.product.sourceUrl = originalUrl;
   normalized.product.source = "STONE_ISLAND" as any;
-  normalized.product.brand = "STONE ISLAND";
-  normalized.product.vendor = "STONE ISLAND" as any;
+  normalized.product.brand = "Stone Island";
+  normalized.product.vendor = "Stone Island" as any;
   normalized.product.category = capture.category || "Clothing";
   normalized.product.productType = capture.category || "Clothing";
-  normalized.product.tags = ["Men", "STONE ISLAND", "Stone Island Poland"];
+  normalized.product.tags = ["Men", "Stone Island", "Stone Island Poland"];
   normalized.product.price = sourcePrice;
   normalized.product.compareAtPrice = sourceCompareAtPrice;
   normalized.product.currency = sourceCurrency;
+
+  const capturedSizes = (capture.sizes || []).filter((item) => String(item.size || item.text || "").trim());
+  if (!capturedSizes.length && !/bag|hat|cap|accessor|one size/i.test(`${capture.category || ""} ${capture.title || ""}`)) {
+    throw new Error("Stone Island sizes were not captured. Reload Chrome Capture from the repository and run the import again.");
+  }
 
   return normalized;
 }
