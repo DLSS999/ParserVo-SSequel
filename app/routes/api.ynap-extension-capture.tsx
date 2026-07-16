@@ -18,6 +18,7 @@ import {
 import { storeYnapCapture } from "../services/ynap-catalog-store.server";
 import { createStoredAdminClient } from "../services/shopify-stored-admin.server";
 import { syncProductToShopifyStrict } from "../services/shopify-sync-fixed.server";
+import { skuForVariant } from "../services/sku-policy.server";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -89,6 +90,13 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const normalized = normalizeCapture(payload.capture);
+    if (normalized.product.source === "STONE_ISLAND") {
+      normalized.product.variants = normalized.product.variants.map((variant) => ({
+        ...variant,
+        sku: skuForVariant(normalized.product, variant, false),
+      }));
+    }
+
     const stored = await storeYnapCapture(normalized);
     let shopify: any = null;
     let shopifyError: string | null = null;
