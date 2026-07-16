@@ -10,6 +10,11 @@ import {
   normalizeYnapCapture,
   type YnapBrowserCapture,
 } from "../services/ynap-capture-normalizer.server";
+import {
+  isStoneIslandCapture,
+  normalizeStoneIslandCapture,
+  parseLocalizedNumber,
+} from "../services/stone-island-capture-normalizer.server";
 import { storeYnapCapture } from "../services/ynap-catalog-store.server";
 import { createStoredAdminClient } from "../services/shopify-stored-admin.server";
 import { syncProductToShopifyStrict } from "../services/shopify-sync-fixed.server";
@@ -25,87 +30,10 @@ function response(data: unknown, status = 200) {
   return json(data, { status, headers: corsHeaders });
 }
 
-function numericPrice(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  const raw = String(value ?? "")
-    .replace(/\s/g, "")
-    .replace(/,(?=\d{3}(?:\D|$))/g, "")
-    .replace(/,/g, ".")
-    .replace(/[^0-9.-]/g, "");
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function isStoneIslandCapture(capture: YnapBrowserCapture) {
-  try {
-    const url = new URL(String(capture.url || ""));
-    return String(capture.categoryId || "").startsWith("stone-island:") &&
-      /(^|\.)stoneisland\.com$/i.test(url.hostname);
-  } catch {
-    return false;
-  }
-}
-
 function normalizeCapture(capture: YnapBrowserCapture) {
-  if (!isStoneIslandCapture(capture)) return normalizeYnapCapture(capture);
-
-  const originalUrl = capture.url;
-  const productCode = String(capture.productCode || "stone-island-product")
-    .replace(/\.html?$/i, "")
-    .replace(/[^a-zA-Z0-9_-]+/g, "-");
-
-  const sourceCurrency = String(capture.currency || "PLN").toUpperCase();
-  const sourcePrice = numericPrice(capture.price);
-  const sourceCompareAtPrice = numericPrice(capture.compareAtPrice) || null;
-  const plnRate = numericPrice(capture.rates?.pln) || 12.19;
-  const eurRate = numericPrice(capture.rates?.eur) || 55;
-
-  const conversionFactor = sourceCurrency === "PLN" ? plnRate / eurRate : 1;
-  const strictPrice = sourcePrice * conversionFactor;
-  const strictCompareAtPrice = sourceCompareAtPrice
-    ? sourceCompareAtPrice * conversionFactor
-    : null;
-
-  const compatibleCapture = {
-    ...capture,
-    categoryId: "mrp-clothing",
-    source: "MR_PORTER",
-    gender: "MEN",
-    category: capture.category || "Clothing",
-    brand: "Stone Island",
-    productCode,
-    currency: sourceCurrency === "PLN" ? "EUR" : sourceCurrency,
-    price: strictPrice,
-    compareAtPrice: strictCompareAtPrice,
-    url: `https://www.mrporter.com/en-pl/mens/product/stone-island/clothing/${productCode}/${productCode}`,
-    media: (capture.media || []).map((item, index) => ({
-      ...item,
-      originalUrl: item.type === "video"
-        ? `https://www.mrporter.com/variants/videos/${productCode}/${index + 1}.mp4`
-        : `https://www.mrporter.com/variants/images/${productCode}/${index + 1}.jpg`,
-    })),
-  } as YnapBrowserCapture;
-
-  const normalized = normalizeYnapCapture(compatibleCapture);
-  normalized.categoryId = capture.categoryId;
-  normalized.sourcePayload = capture;
-  normalized.product.sourceUrl = originalUrl;
-  normalized.product.source = "STONE_ISLAND" as any;
-  normalized.product.brand = "Stone Island";
-  normalized.product.vendor = "Stone Island" as any;
-  normalized.product.category = capture.category || "Clothing";
-  normalized.product.productType = capture.category || "Clothing";
-  normalized.product.tags = ["Men", "Stone Island", "Stone Island Poland"];
-  normalized.product.price = sourcePrice;
-  normalized.product.compareAtPrice = sourceCompareAtPrice;
-  normalized.product.currency = sourceCurrency;
-
-  const capturedSizes = (capture.sizes || []).filter((item) => String(item.size || item.text || "").trim());
-  if (!capturedSizes.length && !/bag|hat|cap|accessor|one size/i.test(`${capture.category || ""} ${capture.title || ""}`)) {
-    throw new Error("Stone Island sizes were not captured. Reload Chrome Capture from the repository and run the import again.");
-  }
-
-  return normalized;
+  return isStoneIslandCapture(capture)
+    ? normalizeStoneIslandCapture(capture)
+    : normalizeYnapCapture(capture);
 }
 
 async function saveImportState(handle: string, patch: Record<string, unknown>) {
@@ -129,6 +57,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return response({
     ok: true,
     name: "ParserVo NET-A-PORTER / MR PORTER / Stone Island capture API",
+    version: "stone-island-2.4.0",
   });
 }
 
@@ -166,10 +95,18 @@ export async function action({ request }: ActionFunctionArgs) {
 
     try {
       const admin = await createStoredAdminClient(shop);
+      const captureWithSettings = payload.capture as YnapBrowserCapture & {
+        defaultQuantity?: number | string;
+        quantity?: number | string;
+      };
+      const defaultQuantity = Math.max(
+        0,
+        Math.trunc(parseLocalizedNumber(captureWithSettings.defaultQuantity ?? captureWithSettings.quantity ?? 5)),
+      );
       shopify = await syncProductToShopifyStrict(admin, normalized.product, {
-        eurRate: Number(payload.capture.rates?.eur || 55),
-        plnRate: Number(payload.capture.rates?.pln || 12.19),
-        defaultQuantity: 5,
+        eurRate: parseLocalizedNumber(payload.capture.rates?.eur) || 55,
+        plnRate: parseLocalizedNumber(payload.capture.rates?.pln) || 12.19,
+        defaultQuantity,
       });
       const warnings = Array.isArray(shopify?.metafieldErrors)
         ? shopify.metafieldErrors.filter(Boolean)
@@ -233,6 +170,11 @@ export async function action({ request }: ActionFunctionArgs) {
         handle: stored.handle,
         brand: normalized.product.brand,
         title: normalized.product.title,
+        color: normalized.product.color,
+        sizes: normalized.product.sizes,
+        price: normalized.product.price,
+        compareAtPrice: normalized.product.compareAtPrice,
+        currency: normalized.product.currency,
         availableVariants: stored.availableVariants,
         images: stored.images,
         videos: stored.videos,
