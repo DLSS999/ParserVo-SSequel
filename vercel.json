@@ -1,5 +1,6 @@
 {
-  "framework": "react-router",
-  "installCommand": "PRISMA_SKIP_POSTINSTALL_GENERATE=true PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts --no-audit --no-fund",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "remix",
+  "installCommand": "npm install --no-audit --no-fund --legacy-peer-deps",
   "buildCommand": "npm run vercel-build"
 }

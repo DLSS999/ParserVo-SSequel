@@ -67,7 +67,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       currencyRateEurUah: parseDecimalFormValue(formData.get("currencyRateEurUah"), 45),
       currencyRatePlnUah: parseDecimalFormValue(formData.get("currencyRatePlnUah"), 12.19),
       currencyRateGbpUah: parseDecimalFormValue(formData.get("currencyRateGbpUah"), 55),
-      currencyRateUsdUah: parseDecimalFormValue(formData.get("currencyRateUsdUah"), 41),
+      currencyRateUsdUah: parseDecimalFormValue(formData.get("currencyRateUsdUah"), 42),
+      currencyRateGbpUah: parseDecimalFormValue(formData.get("currencyRateGbpUah"), 55),
+      currencyRateUsdUah: parseDecimalFormValue(formData.get("currencyRateUsdUah"), 42),
       defaultMarkupPercent: parseDecimalFormValue(formData.get("defaultMarkupPercent"), 60),
       roundingRule: String(formData.get("roundingRule") || "round_to_5"),
       compareAtEnabled: formData.get("compareAtEnabled") === "on",
@@ -85,7 +87,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       currencyRateEurUah: parseDecimalFormValue(formData.get("currencyRateEurUah"), 45),
       currencyRatePlnUah: parseDecimalFormValue(formData.get("currencyRatePlnUah"), 12.19),
       currencyRateGbpUah: parseDecimalFormValue(formData.get("currencyRateGbpUah"), 55),
-      currencyRateUsdUah: parseDecimalFormValue(formData.get("currencyRateUsdUah"), 41),
+      currencyRateUsdUah: parseDecimalFormValue(formData.get("currencyRateUsdUah"), 42),
       defaultMarkupPercent: parseDecimalFormValue(formData.get("defaultMarkupPercent"), 60),
       roundingRule: String(formData.get("roundingRule") || "round_to_5"),
       compareAtEnabled: formData.get("compareAtEnabled") === "on",
@@ -132,14 +134,8 @@ export default function Settings() {
               <label>PLN → UAH rate</label>
               <input name="currencyRatePlnUah" type="text" inputMode="decimal" placeholder="12.19 або 12,19" defaultValue={String(settings.currencyRatePlnUah)} />
             </div>
-            <div>
-              <label>GBP → UAH rate</label>
-              <input name="currencyRateGbpUah" type="text" inputMode="decimal" defaultValue={String(settings.currencyRateGbpUah)} />
-            </div>
-            <div>
-              <label>USD → UAH rate</label>
-              <input name="currencyRateUsdUah" type="text" inputMode="decimal" defaultValue={String(settings.currencyRateUsdUah)} />
-            </div>
+            <div><label>GBP → UAH rate</label><input name="currencyRateGbpUah" type="text" defaultValue={String(settings.currencyRateGbpUah)} /></div>
+            <div><label>USD → UAH rate</label><input name="currencyRateUsdUah" type="text" defaultValue={String(settings.currencyRateUsdUah)} /></div>
             <div>
               <label>Markup %</label>
               <input name="defaultMarkupPercent" type="text" inputMode="decimal" placeholder="60" defaultValue={String(settings.defaultMarkupPercent)} />

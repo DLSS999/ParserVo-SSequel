@@ -4,8 +4,6 @@ export type PricingInput = {
   currency: string;
   eurRate: number;
   plnRate: number;
-  gbpRate?: number;
-  usdRate?: number;
   markupPercent: number;
   roundingRule: string;
   compareAtEnabled: boolean;
@@ -35,17 +33,13 @@ function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function getCurrencyRate(currency: string, eurRate: number, plnRate: number, gbpRate = 55, usdRate = 41) {
+function getCurrencyRate(currency: string, eurRate: number, plnRate: number) {
   const normalized = String(currency || "").toUpperCase().trim();
   const eur = toDecimalNumber(eurRate, 45);
   const pln = toDecimalNumber(plnRate, 12.5);
-  const gbp = toDecimalNumber(gbpRate, 55);
-  const usd = toDecimalNumber(usdRate, 41);
 
   if (normalized === "EUR" || normalized === "€") return eur;
   if (normalized === "PLN" || normalized === "ZŁ" || normalized === "ZL") return pln;
-  if (normalized === "GBP" || normalized === "£") return gbp;
-  if (normalized === "USD" || normalized === "$") return usd;
 
   return 1;
 }
@@ -90,7 +84,7 @@ function getCinqCoefficient(priceInSupplierCurrency: number, currency: string, c
 
 export function calculatePricing(input: PricingInput) {
   const supplierPrice = toDecimalNumber(input.supplierPrice, 0);
-  const exchangeRateUsed = getCurrencyRate(input.currency, input.eurRate, input.plnRate, input.gbpRate, input.usdRate);
+  const exchangeRateUsed = getCurrencyRate(input.currency, input.eurRate, input.plnRate);
 
   const rawCostPriceUah = supplierPrice * exchangeRateUsed;
   const costPriceUah = roundMoney(rawCostPriceUah);

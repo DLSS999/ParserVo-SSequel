@@ -135,7 +135,7 @@ model AppSettings {
   currencyRateEurUah       Float    @default(45)
   currencyRatePlnUah       Float    @default(12.19)
   currencyRateGbpUah       Float    @default(55)
-  currencyRateUsdUah       Float    @default(41)
+  currencyRateUsdUah       Float    @default(42)
   defaultMarkupPercent     Float    @default(60)
   roundingRule             String   @default("round_to_5")
   compareAtEnabled         Boolean  @default(true)
@@ -172,22 +172,23 @@ model ImportQueueItem {
 }
 
 model SupplierSource {
-  id String @id @default(cuid())
-  shop String
-  name String
-  code String
-  catalogUrl String
-  productUrlPattern String?
-  currency String @default("PLN")
-  exchangeRate Float @default(1)
-  markupPercent Float @default(60)
-  defaultQuantity Int @default(5)
-  enabled Boolean @default(true)
-  parserMode String @default("browser_capture")
-  autoImport Boolean @default(false)
-  updateExisting Boolean @default(true)
-  hideUnavailable Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                     String   @id @default(cuid())
+  shop                   String
+  name                   String
+  code                   String
+  baseUrl                String
+  catalogUrl             String
+  currency               String   @default("PLN")
+  exchangeRate           Float    @default(12.19)
+  markupPercent          Float    @default(60)
+  defaultQuantity        Int      @default(5)
+  captureMode            String   @default("browser")
+  enabled                Boolean  @default(true)
+  updateExisting         Boolean  @default(true)
+  hideUnavailable        Boolean  @default(false)
+  autoImport             Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
   @@unique([shop, code])
 }

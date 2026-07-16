@@ -112,8 +112,6 @@ export default function App() {
         <Link to="/app/excel-import">Excel Import</Link>
         <Link to="/app/products">Imported Products</Link>
         <Link to="/app/stock-sync">Stock Sync</Link>
-        <Link to="/app/warehouse-transfer">Warehouse Transfer</Link>
-        <Link to="/app/seo">SEO Center</Link>
         <Link to="/app/logs">Sync Logs</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>

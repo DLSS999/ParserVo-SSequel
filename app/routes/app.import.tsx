@@ -6,7 +6,6 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { calculatePricing } from "../services/pricing.server";
 import { detectSupplier, parseVitkacProduct, parseVitkacProductFromHtml } from "../services/vitkac.server";
-import { isStoneIslandUrl, parseStoneIslandProduct } from "../services/stone-island.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -55,10 +54,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { ok: false, error: "Вставьте ссылку товара." };
     }
 
-    const supplier = isStoneIslandUrl(supplierUrl) ? "Stone Island" : detectSupplier(supplierUrl);
+    const supplier = detectSupplier(supplierUrl);
 
     if (!supplier) {
-      return { ok: false, error: "Этот поставщик пока не поддерживается. Подключены Vitkac и Stone Island." };
+      return { ok: false, error: "Этот поставщик пока не поддерживается. Сейчас подключен только Vitkac." };
     }
 
     const duplicateByUrl = await db.importedProduct.findFirst({
@@ -77,18 +76,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let parsedProduct;
 
     try {
-      parsedProduct = supplier === "Stone Island"
-        ? await parseStoneIslandProduct(supplierUrl, pageHtml.length > 1000 ? pageHtml : undefined)
-        : pageHtml.length > 1000
-          ? await parseVitkacProductFromHtml(supplierUrl, pageHtml)
-          : await parseVitkacProduct(supplierUrl);
+      parsedProduct = pageHtml.length > 1000
+        ? await parseVitkacProductFromHtml(supplierUrl, pageHtml)
+        : await parseVitkacProduct(supplierUrl);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
       return {
         ok: false,
         error:
-          "Сайт заблокировал автоматический запрос. Используй HTML import mode: открой товар в Chrome, Ctrl+U, Ctrl+A, Ctrl+C, вставь HTML в поле и снова нажми Parse product. Деталь: " +
+          "Vitkac заблокировал автоматический парсинг. Это защита Vitkac от ботов, а не ошибка Shopify. Используй HTML import mode: открой товар в обычном Chrome, нажми Ctrl+U, затем Ctrl+A, Ctrl+C, вернись сюда, вставь HTML в поле Vitkac page HTML и снова нажми Parse product. Деталь ошибки: " +
           message,
       };
     }
@@ -112,8 +109,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       currency: parsedProduct.supplierCurrency,
       eurRate: eurRateForImport,
       plnRate: plnRateForImport,
-      gbpRate: settings.currencyRateGbpUah,
-      usdRate: settings.currencyRateUsdUah,
       markupPercent: settings.defaultMarkupPercent,
       roundingRule: settings.roundingRule,
       compareAtEnabled: settings.compareAtEnabled,
