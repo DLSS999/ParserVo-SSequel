@@ -10,17 +10,7 @@ import {
   listParserVoAgents,
 } from "../services/crawl-jobs.server";
 
-const categories = [
-  { id: "all", source: "Оба сайта", category: "Весь каталог", expected: 2667 },
-  { id: "nap-clothing", source: "NET-A-PORTER / Women", category: "Clothing", expected: 700 },
-  { id: "nap-shoes", source: "NET-A-PORTER / Women", category: "Shoes", expected: 299 },
-  { id: "nap-bags", source: "NET-A-PORTER / Women", category: "Bags", expected: 146 },
-  { id: "nap-accessories", source: "NET-A-PORTER / Women", category: "Accessories", expected: 137 },
-  { id: "mrp-clothing", source: "MR PORTER / Men", category: "Clothing", expected: 910 },
-  { id: "mrp-shoes", source: "MR PORTER / Men", category: "Shoes", expected: 282 },
-  { id: "mrp-bags", source: "MR PORTER / Men", category: "Bags", expected: 37 },
-  { id: "mrp-accessories", source: "MR PORTER / Men", category: "Accessories", expected: 156 },
-];
+const DEFAULT_STONE_URL = "https://www.stoneisland.com/en-pl/men/sales/view-all-sales";
 
 function dateTime(value: string | null) {
   if (!value) return "—";
@@ -40,6 +30,27 @@ function progress(done?: number | null, total?: number | null) {
   const safeDone = Number(done || 0);
   const safeTotal = Number(total || 0);
   return safeTotal > 0 ? `${safeDone} / ${safeTotal}` : String(safeDone);
+}
+
+function parsePositive(value: FormDataEntryValue | null, fallback: number) {
+  const parsed = Number(String(value ?? "").replace(",", "."));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseQuantity(value: FormDataEntryValue | null, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : fallback;
+}
+
+function validateStoneUrl(value: string) {
+  const parsed = new URL(value);
+  if (!/(^|\.)stoneisland\.com$/i.test(parsed.hostname)) {
+    throw new Error("Разрешены только ссылки сайта stoneisland.com.");
+  }
+  if (!/^https?:$/.test(parsed.protocol)) {
+    throw new Error("Ссылка должна начинаться с https://");
+  }
+  return parsed.toString();
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -70,11 +81,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     apiBaseUrl: process.env.SHOPIFY_APP_URL || new URL(request.url).origin,
     captureToken: browserCaptureKey(session.shop),
     jobs,
-    agents,
     onlineAgent,
     queueReady,
     queueError,
-    categories,
+    defaultStoneUrl: DEFAULT_STONE_URL,
   });
 }
 
@@ -91,18 +101,25 @@ export async function action({ request }: ActionFunctionArgs) {
       return json({ ok: true, message: "Задание отменено." });
     }
 
-    const categoryId = String(form.get("categoryId") || "all");
-    const maxProductsRaw = Number(form.get("maxProducts") || 0);
-    const maxProducts = Number.isFinite(maxProductsRaw) ? Math.max(0, Math.trunc(maxProductsRaw)) : 0;
+    const catalogUrl = validateStoneUrl(String(form.get("catalogUrl") || "").trim());
+    const maxProducts = parseQuantity(form.get("maxProducts"), 5);
+    const plnRate = parsePositive(form.get("plnRate"), 12.19);
+    const quantity = parseQuantity(form.get("quantity"), 5);
+    const encodedPayload = encodeURIComponent(JSON.stringify({
+      url: catalogUrl,
+      plnRate,
+      quantity,
+    }));
+
     const job = await enqueueCrawlJob({
       shopDomain: session.shop,
-      categoryId,
+      categoryId: `stone-island:${encodedPayload}`,
       maxProducts,
     });
 
     return json({
       ok: true,
-      message: `Задание ${categoryId} добавлено в очередь Chrome Capture.`,
+      message: `Stone Island добавлен в очередь. Лимит: ${maxProducts || "все товары"}.`,
       jobId: job.id,
     });
   } catch (error) {
@@ -127,15 +144,15 @@ export default function CrawlerPage() {
     <main className="pv-stack">
       <div className="pv-page-header">
         <div>
-          <h1>STONE ISLAND / PARSER CONTROL</h1>
-          <p>Управление источниками, очередью, прогрессом и импортом в Shopify.</p>
+          <h1>STONE ISLAND / IMPORT CONTROL</h1>
+          <p>Вставьте ссылку каталога, задайте параметры и запустите импорт.</p>
         </div>
         <div className="pv-header">
           <span className={`pv-pill ${data.queueReady ? "pv-pill-green" : "pv-pill-red"}`}>
             {data.queueReady ? "Очередь подключена" : "Очередь не настроена"}
           </span>
           <span className={`pv-pill ${extensionOnline ? "pv-pill-green" : "pv-pill-red"}`}>
-            {extensionOnline ? `Chrome Capture онлайн: ${data.onlineAgent?.agent_id}` : "Chrome Capture офлайн"}
+            {extensionOnline ? "Chrome Capture онлайн" : "Chrome Capture офлайн"}
           </span>
         </div>
       </div>
@@ -147,14 +164,56 @@ export default function CrawlerPage() {
 
       <section className="pv-card">
         <div className="pv-header">
-          <h2 className="pv-title">CAPTURE AGENT CONFIGURATION</h2>
+          <h2 className="pv-title">1. ВСТАВЬТЕ ССЫЛКУ STONE ISLAND</h2>
+          <span className="pv-pill">Польская версия / PLN</span>
+        </div>
+
+        <Form method="post" className="pv-stack">
+          <input type="hidden" name="intent" value="enqueue" />
+
+          <label>
+            <span>Ссылка на каталог или категорию</span>
+            <input
+              name="catalogUrl"
+              type="url"
+              required
+              defaultValue={data.defaultStoneUrl}
+              placeholder="https://www.stoneisland.com/en-pl/men/sales/view-all-sales"
+            />
+          </label>
+
+          <div className="pv-settings-grid">
+            <label>
+              <span>Курс PLN → UAH</span>
+              <input name="plnRate" inputMode="decimal" defaultValue="12,19" required />
+            </label>
+            <label>
+              <span>Остаток каждого размера</span>
+              <input name="quantity" type="number" min="0" step="1" defaultValue="5" required />
+            </label>
+            <label>
+              <span>Лимит товаров для запуска</span>
+              <input name="maxProducts" type="number" min="0" step="1" defaultValue="5" title="0 = все товары" />
+            </label>
+          </div>
+
+          <div className="pv-note">
+            Для проверки поставьте лимит 1 или 5. Значение 0 означает полный каталог. После запуска Chrome Capture откроет ссылку, найдёт карточки товаров и передаст их в Shopify.
+          </div>
+
+          <button className="pv-button pv-button-primary" type="submit" disabled={!data.queueReady || !extensionOnline}>
+            НАЙТИ ТОВАРЫ И ИМПОРТИРОВАТЬ
+          </button>
+        </Form>
+      </section>
+
+      <section className="pv-card">
+        <div className="pv-header">
+          <h2 className="pv-title">2. ПОДКЛЮЧЕНИЕ CHROME CAPTURE</h2>
           <span className={`pv-pill ${extensionOnline ? "pv-pill-green" : "pv-pill-red"}`}>
-            {extensionOnline ? data.onlineAgent?.message || "Расширение готово" : "вставь настройки и нажми Test API"}
+            {extensionOnline ? data.onlineAgent?.message || "Расширение готово" : "нужно подключить расширение"}
           </span>
         </div>
-        <p className="pv-note">
-          Установи ParserVo YNAP Capture через chrome://extensions, затем скопируй эти три значения в popup расширения. Supabase Secret Key расширению не нужен.
-        </p>
         <div className="pv-settings-grid">
           <label><span>API Base URL</span><input readOnly value={data.apiBaseUrl} /></label>
           <label><span>Shop</span><input readOnly value={data.shop} /></label>
@@ -166,62 +225,18 @@ export default function CrawlerPage() {
         </div>
       </section>
 
-      {!extensionOnline ? (
-        <div className="pv-alert pv-alert-error">
-          Расширение Chrome не подключено. Очередь принимает задания, но они останутся QUEUED до успешного Test API в расширении.
-        </div>
-      ) : null}
-
       <section className="pv-card">
         <div className="pv-header">
-          <h2 className="pv-title">START PARSING</h2>
-          <span className={`pv-pill ${extensionOnline ? "pv-pill-green" : "pv-pill-red"}`}>
-            {extensionOnline ? "готово" : "ожидание расширения"}
-          </span>
-        </div>
-        <p className="pv-note">
-          Chrome Capture открывает страницы через твой обычный Chrome, сохраняет до 5 фото, размеры и цены, а затем автоматически создаёт или обновляет товар Shopify.
-        </p>
-        <div className="pv-table-wrap">
-          <table className="pv-table">
-            <thead><tr><th>Источник</th><th>Категория</th><th>Ожидается</th><th>Тестовый лимит</th><th>Действие</th></tr></thead>
-            <tbody>
-              {data.categories.map((category) => (
-                <tr key={category.id}>
-                  <td>{category.source}</td>
-                  <td>{category.category}</td>
-                  <td>{category.expected}</td>
-                  <td>
-                    <Form method="post" className="pv-inline-form">
-                      <input type="hidden" name="intent" value="enqueue" />
-                      <input type="hidden" name="categoryId" value={category.id} />
-                      <input name="maxProducts" type="number" min="0" step="1" defaultValue={category.id === "all" ? 0 : 5} title="0 = без лимита" />
-                      <button className="pv-button pv-button-primary" type="submit" disabled={!data.queueReady || !extensionOnline}>
-                        {category.id === "all" ? "PARSE FULL CATALOG" : "Запустить"}
-                      </button>
-                    </Form>
-                  </td>
-                  <td><span className="pv-note">0 = без лимита</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="pv-card">
-        <div className="pv-header">
-          <h2 className="pv-title">QUEUE / PROGRESS</h2>
-          <button className="pv-button" type="button" onClick={() => revalidator.revalidate()}>REFRESH</button>
+          <h2 className="pv-title">3. ПРОГРЕСС И РЕЗУЛЬТАТ</h2>
+          <button className="pv-button" type="button" onClick={() => revalidator.revalidate()}>ОБНОВИТЬ</button>
         </div>
         <div className="pv-table-wrap">
           <table className="pv-table">
-            <thead><tr><th>Время</th><th>Категория</th><th>Статус</th><th>Страницы</th><th>Ссылки</th><th>Товары</th><th>Ошибки</th><th>Сообщение</th><th></th></tr></thead>
+            <thead><tr><th>Время</th><th>Статус</th><th>Страницы</th><th>Ссылки</th><th>Товары</th><th>Ошибки</th><th>Сообщение</th><th></th></tr></thead>
             <tbody>
               {data.jobs.length ? data.jobs.map((job) => (
                 <tr key={job.id}>
                   <td>{dateTime(job.requested_at)}</td>
-                  <td>{job.category_id}</td>
                   <td><span className={`pv-pill ${statusClass(job.status)}`}>{job.status}</span></td>
                   <td>{progress(job.pages_done, job.pages_total)}</td>
                   <td>{job.links_found || 0}</td>
@@ -233,13 +248,13 @@ export default function CrawlerPage() {
                       <Form method="post">
                         <input type="hidden" name="intent" value="cancel" />
                         <input type="hidden" name="jobId" value={job.id} />
-                        <button className="pv-button" type="submit">Отменить</button>
+                        <button className="pv-button" type="submit">ОТМЕНИТЬ</button>
                       </Form>
                     ) : null}
                   </td>
                 </tr>
               )) : (
-                <tr><td colSpan={9}>Заданий ещё нет.</td></tr>
+                <tr><td colSpan={8}>Запусков Stone Island ещё нет.</td></tr>
               )}
             </tbody>
           </table>
