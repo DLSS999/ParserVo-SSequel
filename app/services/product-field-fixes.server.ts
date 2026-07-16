@@ -1,6 +1,62 @@
 import type { ParsedMarketplaceProduct } from "./media.server";
 import { getProductMapping } from "./product-mapping.server";
 
+const SHOPIFY_STANDARD_COLOR_TAGS = new Set([
+  "silver",
+  "red",
+  "purple",
+  "pink",
+  "green",
+  "gray",
+  "blue",
+  "black",
+  "beige",
+  "brown",
+  "navy",
+  "white",
+  "bronze",
+  "clear",
+  "gold",
+  "orange",
+  "rose gold",
+  "yellow",
+]);
+
+function cleanSupplierColor(value: string | null | undefined) {
+  return String(value || "")
+    .replace(/^colou?r\s*:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function nonStandardColorTag(product: ParsedMarketplaceProduct) {
+  const color = cleanSupplierColor(product.color);
+  if (!color || color.length > 60) return "";
+
+  const normalized = color.toLowerCase();
+  if (SHOPIFY_STANDARD_COLOR_TAGS.has(normalized)) return "";
+  if (/^\d+\s+colou?rs?$/i.test(color)) return "";
+  if (/^(?:select|choose)\s+(?:a\s+)?colou?r$/i.test(color)) return "";
+
+  return color;
+}
+
+function uniqueTags(values: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    const clean = String(value || "").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(clean);
+  }
+
+  return result;
+}
+
 export function getCorrectProductMapping(product: ParsedMarketplaceProduct) {
   const source = ` ${[
     product.title,
@@ -56,10 +112,11 @@ export function cleanPublicDescription(value: string | null | undefined) {
 
 export function publicProductTags(product: ParsedMarketplaceProduct, productType: string) {
   const hidden = /net-a-porter|mr\s*porter|imported\s+by\s+parservo|parservo/i;
-  return Array.from(new Set([
+  return uniqueTags([
     ...(product.tags || []).filter((tag) => !hidden.test(String(tag))),
     product.gender === "WOMEN" ? "Women" : "Men",
     productType,
+    nonStandardColorTag(product),
     "Preorder",
-  ].map((tag) => String(tag || "").trim()).filter(Boolean)));
+  ]);
 }
