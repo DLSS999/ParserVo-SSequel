@@ -100,7 +100,7 @@ export async function listParserVoAgents(shopDomain: string): Promise<ParserVoAg
 }
 
 export async function cancelCrawlJob(jobId: string, shopDomain: string) {
-  await rest(`parservo_crawl_jobs?id=eq.${encodeURIComponent(jobId)}&shop_domain=eq.${encodeURIComponent(shopDomain)}&status=eq.QUEUED`, {
+  await rest(`parservo_crawl_jobs?id=eq.${encodeURIComponent(jobId)}&shop_domain=eq.${encodeURIComponent(shopDomain)}&status=in.(QUEUED,RUNNING)`, {
     method: "PATCH",
     headers: headers(config().key, "return=minimal"),
     body: JSON.stringify({
