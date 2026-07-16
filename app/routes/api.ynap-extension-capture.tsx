@@ -46,6 +46,16 @@ function isStoneIslandCapture(capture: YnapBrowserCapture) {
   }
 }
 
+function mirrorMarker(urlValue: string) {
+  try {
+    const url = new URL(urlValue);
+    url.searchParams.set("parservo_media", "/storage/v1/object/public/parservo-media/");
+    return url.toString();
+  } catch {
+    return urlValue;
+  }
+}
+
 function normalizeCapture(capture: YnapBrowserCapture) {
   if (!isStoneIslandCapture(capture)) return normalizeYnapCapture(capture);
 
@@ -60,9 +70,6 @@ function normalizeCapture(capture: YnapBrowserCapture) {
   const plnRate = numericPrice(capture.rates?.pln) || 12.19;
   const eurRate = numericPrice(capture.rates?.eur) || 55;
 
-  // The proven strict YNAP normalizer has a EUR-oriented safety ceiling of 2000.
-  // Convert PLN values to an equivalent EUR amount only for validation/pricing.
-  // Original PLN values are restored on the normalized product below.
   const conversionFactor = sourceCurrency === "PLN" ? plnRate / eurRate : 1;
   const strictPrice = sourcePrice * conversionFactor;
   const strictCompareAtPrice = sourceCompareAtPrice
@@ -102,6 +109,12 @@ function normalizeCapture(capture: YnapBrowserCapture) {
   normalized.product.price = sourcePrice;
   normalized.product.compareAtPrice = sourceCompareAtPrice;
   normalized.product.currency = sourceCurrency;
+
+  normalized.product.media = normalized.product.media.map((item) => ({
+    ...item,
+    url: mirrorMarker(item.url),
+  }));
+
   return normalized;
 }
 
