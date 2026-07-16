@@ -1,21 +1,41 @@
-import { chromium } from "playwright";
 import type { ParsedSupplierProduct, ParsedSupplierVariant } from "./vitkac.server";
 
-const decode = (v:string) => v.replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&nbsp;/g," ").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
-const unique = <T,>(a:T[]) => [...new Set(a)];
-function money(v:unknown){ const x=String(v??"").replace(/\s/g,"").replace(/zł|pln|gbp|£|€/gi,""); const comma=x.lastIndexOf(','), dot=x.lastIndexOf('.'); let n=x.replace(/[^0-9,.-]/g,""); if(comma>dot)n=n.replace(/\./g,"").replace(',', '.'); else n=n.replace(/,/g,''); const r=Number(n); return Number.isFinite(r)?r:0; }
-function meta(html:string, key:string){ const esc=key.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); const patterns=[new RegExp(`<meta[^>]+(?:property|name)=["']${esc}["'][^>]+content=["']([^"']+)["']`,'i'),new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${esc}["']`,'i')]; for(const r of patterns){const m=html.match(r);if(m)return decode(m[1]);} return "";}
-function jsonLd(html:string){ const out:any[]=[]; for(const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){try{const v=JSON.parse(m[1]);out.push(...(Array.isArray(v)?v:[v]));}catch{}} return out.flatMap((x:any)=>x?.['@graph']||[x]).find((x:any)=>String(x?.['@type']||'').toLowerCase().includes('product'))||{}; }
-function sizes(html:string):ParsedSupplierVariant[]{ const values:string[]=[]; for(const m of html.matchAll(/<option[^>]*value=["'][^"']*["'][^>]*>([\s\S]*?)<\/option>/gi)){const t=decode(m[1]).replace(/^select size$/i,'').trim(); if(t && t.length<20) values.push(t.toUpperCase());} for(const m of html.matchAll(/(?:data-size|aria-label)=["'](?:size\s*)?([^"']+)["']/gi)){const t=decode(m[1]).trim();if(/^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3})$/i.test(t))values.push(t.toUpperCase());} return unique(values).map((size,i)=>({size,supplierSizeLabel:size,available:true})); }
-function images(html:string, product:any){const a:string[]=[]; const add=(v:any)=>{for(const x of Array.isArray(v)?v:[v]){if(typeof x==='string'&&/^https?:\/\//.test(x)&&/\.(jpe?g|png|webp)(\?|$)/i.test(x))a.push(x.replace(/\\u002F/g,'/').replace(/\\\//g,'/'));}}; add(product.image); add(meta(html,'og:image')); for(const m of html.matchAll(/https?:\\?\/\\?\/[^"'\s<>]+\.(?:jpg|jpeg|png|webp)(?:\?[^"'\s<>]*)?/gi))add(m[0]); return unique(a);}
-function textBetween(html:string,label:string){const r=new RegExp(`${label}[\\s\\S]{0,1200}?<(?:p|div)[^>]*>([\\s\\S]*?)<\\/(?:p|div)>`,'i');return decode(html.match(r)?.[1]||'');}
-export async function parseStoneIslandProductFromHtml(url:string, html:string):Promise<ParsedSupplierProduct>{
- const product=jsonLd(html); const title=decode(product.name||meta(html,'og:title')||html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]||'Stone Island product');
- const description=decode(product.description||meta(html,'og:description')||textBetween(html,'PRODUCT DETAILS'));
- const sku=String(product.sku||product.mpn||title.match(/\b[A-Z0-9]{6,18}\b/i)?.[0]||new URL(url).pathname.split('/').pop()?.split('.')[0]||'stone-island');
- const offers=Array.isArray(product.offers)?product.offers[0]:product.offers||{}; const pageText=decode(html); const prices=[...pageText.matchAll(/(?:zł|£|€)\s*([0-9.,\s]+)|([0-9.,\s]+)\s*(?:zł|PLN|GBP)/gi)].map(m=>money(m[1]||m[2])).filter(Boolean);
- const current=money(offers.price)||prices.at(-1)||0; const old=prices.find(x=>x>current)||null; const currency=String(offers.priceCurrency||(/zł|PLN/i.test(pageText)?'PLN':/£|GBP/i.test(pageText)?'GBP':'EUR')).toUpperCase();
- const color=decode(pageText.match(/COLOU?R:\s*([^\n]{1,80})/i)?.[1]||''); const composition=textBetween(html,'COMPOSITION')||textBetween(html,'MATERIAL'); const vars=sizes(html); if(!vars.length)vars.push({size:'ONE SIZE',supplierSizeLabel:'ONE SIZE',available:true});
- return {supplierName:'Stone Island',supplierUrl:url.split('?')[0],supplierProductId:sku,supplierSymbol:sku,supplierCurrency:currency,supplierPrice:current,supplierOldPrice:old,brand:'STONE ISLAND',title,originalTitle:title,description,originalDescription:description,color,colorUa:color,gender:'Men',genderUa:'Чоловічий',category:'Sale',categoryUa:'Розпродаж',productType:'',material:'',composition,countryOfOrigin:null,modelCode:sku,breadcrumbs:'Stone Island / Men / Sale',images:images(html,product),variants:vars};
+function decode(value: string) {
+  return value.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").trim();
 }
-export async function parseStoneIslandProduct(url:string){const b=await chromium.launch({headless:true});try{const p=await b.newPage({locale:'en-PL'});await p.goto(url,{waitUntil:'domcontentloaded',timeout:90000});await p.waitForTimeout(2500);return parseStoneIslandProductFromHtml(p.url(),await p.content());}finally{await b.close();}}
+function text(html: string) { return decode(html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")); }
+function num(value: string | undefined) {
+  if (!value) return null;
+  const s=value.replace(/\s/g,"").replace(/[^0-9,.-]/g,"");
+  const lastComma=s.lastIndexOf(","), lastDot=s.lastIndexOf(".");
+  let n=s;
+  if(lastComma>=0&&lastDot>=0){ const d=lastComma>lastDot?",":"."; const t=d===","?".":","; n=s.replaceAll(t,"").replace(d,"."); }
+  else if(lastComma>=0) n=s.replace(/\./g,"").replace(",",".");
+  const p=Number(n.replace(/[^0-9.-]/g,"")); return Number.isFinite(p)?p:null;
+}
+function unique<T>(v:T[]){return [...new Set(v)]}
+function jsonLd(html:string){
+  const blocks=[...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  for(const b of blocks){try{const j=JSON.parse(b[1]); const list=Array.isArray(j)?j:[j]; const p=list.flatMap((x:any)=>x?.['@graph']||[x]).find((x:any)=>x?.['@type']==='Product'); if(p)return p;}catch{}}
+  return null;
+}
+export function isStoneIslandUrl(url:string){return /stoneisland\.com/i.test(url)}
+export async function parseStoneIslandProduct(url:string, providedHtml?:string):Promise<ParsedSupplierProduct>{
+  const html=providedHtml || await fetch(url,{headers:{"user-agent":"Mozilla/5.0","accept-language":"en-PL,en;q=0.9"}}).then(async r=>{if(!r.ok)throw new Error(`Stone Island HTTP ${r.status}`);return r.text()});
+  const ld:any=jsonLd(html)||{};
+  const page=text(html);
+  const title=decode(String(ld.name||html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]||html.match(/<title>(.*?)<\/title>/i)?.[1]||"Stone Island product").replace(/<[^>]+>/g," ").replace(/\s+/g," "));
+  const sku=String(ld.sku||ld.productID||url.match(/([A-Z0-9]{7,20})(?:[._-]|\.html)/i)?.[1]||title.match(/\b[A-Z0-9]{6,16}\b/)?.[0]||Buffer.from(url).toString('base64url').slice(0,18));
+  const offers=Array.isArray(ld.offers)?ld.offers[0]:(ld.offers||{});
+  const price=num(String(offers.price||page.match(/(?:zł|PLN)\s*([\d\s.,]+)/i)?.[1]||page.match(/([\d\s.,]+)\s*(?:zł|PLN)/i)?.[1]||""))||0;
+  const oldCandidates=[...page.matchAll(/(?:zł|PLN)\s*([\d\s.,]+)/gi)].map(m=>num(m[1])||0).filter(Boolean);
+  const oldPrice=oldCandidates.filter(v=>v>price).sort((a,b)=>b-a)[0]||null;
+  const currency=String(offers.priceCurrency||(/zł|PLN/i.test(page)?"PLN":"EUR")).toUpperCase();
+  const images=unique((Array.isArray(ld.image)?ld.image:[ld.image]).filter(Boolean).concat([...html.matchAll(/https?:\\?\/\\?\/[^"'\s<>]+\.(?:jpg|jpeg|png|webp)(?:\?[^"'\s<>]*)?/gi)].map(m=>m[0].replace(/\\\//g,"/")))).slice(0,20);
+  const color=page.match(/COLOU?R\s*:?\s*([A-Za-z][A-Za-z\s-]{2,40})/i)?.[1]?.trim()||"";
+  const optionMatches=[...html.matchAll(/<option[^>]*?(?:disabled)?[^>]*>([^<]{1,30})<\/option>/gi)].map(m=>m[1].trim()).filter(v=>/^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|\d{1,3}|ONE SIZE)$/i.test(v));
+  const variants:ParsedSupplierVariant[]=unique(optionMatches).map(size=>({size:size.toUpperCase(),supplierSizeLabel:size,available:true}));
+  if(!variants.length) variants.push({size:"ONE SIZE",supplierSizeLabel:"ONE SIZE",available:true});
+  const desc=decode(String(ld.description||page.match(/Regular-fit[\s\S]{0,600}/i)?.[0]||"").replace(/<[^>]+>/g," ").replace(/\s+/g," "));
+  return {supplierName:"Stone Island",supplierUrl:url.split("?")[0],supplierProductId:sku,supplierSymbol:sku,supplierCurrency:currency,supplierPrice:price,supplierOldPrice:oldPrice,brand:"STONE ISLAND",title,originalTitle:title,description:desc,originalDescription:desc,color,colorUa:color,gender:"MEN",genderUa:"Чоловічий",category:"Clothing",categoryUa:"Одяг",productType:"Stone Island",material:"",composition:"",countryOfOrigin:null,modelCode:sku,breadcrumbs:"Stone Island / Men / Sale",images,variants};
+}

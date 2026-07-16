@@ -2,7 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 
 import db from "../db.server";
 import { calculatePricing } from "../services/pricing.server";
-import { parseSupplierProduct } from "../services/supplier.server";
+import { parseVitkacProductFromHtml } from "../services/vitkac.server";
 import { unauthenticated } from "../shopify.server";
 import { syncShopifyInventoryForProduct } from "../services/shopify-products.server";
 
@@ -96,7 +96,7 @@ function buildVariantSku(symbol: string | null | undefined, productId: string, v
 async function updateExistingProductFromCapture(args: {
   shop: string;
   existingProductId: string;
-  parsedProduct: Awaited<ReturnType<typeof parseSupplierProduct>>;
+  parsedProduct: Awaited<ReturnType<typeof parseVitkacProductFromHtml>>;
   pricing: ReturnType<typeof calculatePricing>;
   markupPercent: number;
   settings: {
@@ -253,8 +253,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return jsonResponse({
     ok: true,
-    name: "ParserVo Browser Capture API",
-    message: "POST supplier HTML from the Chrome extension to save or refresh a product.",
+    name: "ParserVo Vitkac Capture API",
+    message: "POST Vitkac HTML from the Chrome extension to save or refresh a product.",
   });
 };
 
@@ -285,12 +285,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return jsonResponse({ ok: false, error: "Missing shop or browser capture token." }, 400);
     }
 
-    if (!supplierUrl || !(supplierUrl.includes("vitkac.com") || supplierUrl.includes("stoneisland.com"))) {
-      return jsonResponse({ ok: false, error: "Missing or unsupported supplier product URL." }, 400);
+    if (!supplierUrl || !supplierUrl.includes("vitkac.com")) {
+      return jsonResponse({ ok: false, error: "Missing or invalid Vitkac product URL." }, 400);
     }
 
     if (!pageHtml || pageHtml.length < 1000) {
-      return jsonResponse({ ok: false, error: "Missing supplier page HTML. Open the product page in Chrome and capture again." }, 400);
+      return jsonResponse({ ok: false, error: "Missing Vitkac page HTML. Open product page in Chrome and capture again." }, 400);
     }
 
     const settings = await db.appSettings.findUnique({ where: { shop } });
@@ -299,7 +299,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return jsonResponse({ ok: false, error: "Invalid browser capture token for this shop." }, 401);
     }
 
-    const parsedProduct = await parseSupplierProduct(supplierUrl, pageHtml);
+    const parsedProduct = await parseVitkacProductFromHtml(supplierUrl, pageHtml);
 
     const plnRate = normalizeBaseNumber(payload.rates?.pln, settings.currencyRatePlnUah);
     const eurRate = normalizeBaseNumber(payload.rates?.eur, settings.currencyRateEurUah);
@@ -310,7 +310,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       currency: parsedProduct.supplierCurrency,
       eurRate,
       plnRate,
-      gbpRate: settings.currencyRateGbpUah,
       markupPercent: settings.defaultMarkupPercent,
       roundingRule: settings.roundingRule,
       compareAtEnabled: settings.compareAtEnabled,

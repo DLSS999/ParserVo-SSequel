@@ -2,7 +2,7 @@
 <html lang="ru">
   <head>
     <meta charset="utf-8" />
-    <title>ParserVo Supplier Capture</title>
+    <title>ParserVo Vitkac Capture</title>
     <style>
       body { width: 460px; margin: 0; padding: 14px; font-family: Arial, sans-serif; background: #f6f6f7; color: #202223; }
       h1 { font-size: 18px; margin: 0 0 8px; }
@@ -28,14 +28,14 @@
     </style>
   </head>
   <body>
-    <h1>ParserVo Supplier Capture</h1>
-    <p>Для массового импорта: загрузи Excel в Shopify app, затем нажми Start automatic import. Для контроля наличия нажми Start stock refresh — расширение откроет уже импортированные товары Supplier, обновит наличие и при включенной синхронизации отправит остатки в Shopify.</p>
+    <h1>ParserVo Vitkac Capture</h1>
+    <p>Для массового импорта: загрузи Excel в Shopify app, затем нажми Start automatic import. Для контроля наличия нажми Start stock refresh — расширение откроет уже импортированные товары Vitkac, обновит наличие и при включенной синхронизации отправит остатки в Shopify.</p>
 
     <div class="card">
       <h2>API settings</h2>
       <label>Local API Base URL</label>
       <input id="apiBaseUrl" placeholder="http://localhost:51220 или https://xxxx.trycloudflare.com" />
-      <p class="muted">Бери из PowerShell после запуска shopify app dev. Можно вставить базовый URL или полный URL с /api/supplier-capture.</p>
+      <p class="muted">Бери из PowerShell после запуска shopify app dev. Можно вставить базовый URL или полный URL с /api/vitkac-capture.</p>
 
       <label>Shop</label>
       <input id="shop" placeholder="parservo.myshopify.com" />
@@ -95,8 +95,8 @@
 
     <div class="card">
       <h2>Manual tools</h2>
-      <button id="captureCurrent" class="primary">Capture current Supplier product</button>
-      <button id="captureAll" class="secondary">Capture all open Supplier tabs</button>
+      <button id="captureCurrent" class="primary">Capture current Vitkac product</button>
+      <button id="captureAll" class="secondary">Capture all open Vitkac tabs</button>
       <button id="clearStatus" class="danger">Clear log</button>
     </div>
 

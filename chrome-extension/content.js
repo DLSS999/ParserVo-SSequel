@@ -11,18 +11,18 @@
     const title = document.title || "";
     const text = document.body ? document.body.innerText : "";
 
-    if (!url.includes("supplier.com")) {
-      return { ok: false, error: "This tab is not a Supplier page." };
+    if (!url.includes("vitkac.com")) {
+      return { ok: false, error: "This tab is not a Vitkac page." };
     }
 
     if (!/\/p\//.test(url)) {
-      return { ok: false, error: "This Supplier tab is not a product page." };
+      return { ok: false, error: "This Vitkac tab is not a product page." };
     }
 
     if (!html || html.length < 1000) {
       return {
         ok: false,
-        error: `Supplier HTML is too short (${html.length} chars). Wait until the page is fully loaded and try again.`,
+        error: `Vitkac HTML is too short (${html.length} chars). Wait until the page is fully loaded and try again.`,
       };
     }
 

@@ -5,7 +5,8 @@ import { Form, Link, useActionData, useLoaderData, useNavigation } from "react-r
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { calculatePricing } from "../services/pricing.server";
-import { detectSupplier, parseSupplierProduct } from "../services/supplier.server";
+import { detectSupplier, parseVitkacProduct, parseVitkacProductFromHtml } from "../services/vitkac.server";
+import { isStoneIslandUrl, parseStoneIslandProduct } from "../services/stone-island.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -54,10 +55,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return { ok: false, error: "Вставьте ссылку товара." };
     }
 
-    const supplier = detectSupplier(supplierUrl);
+    const supplier = isStoneIslandUrl(supplierUrl) ? "Stone Island" : detectSupplier(supplierUrl);
 
     if (!supplier) {
-      return { ok: false, error: "Поставщик не распознан. Поддерживаются Vitkac и Stone Island." };
+      return { ok: false, error: "Этот поставщик пока не поддерживается. Подключены Vitkac и Stone Island." };
     }
 
     const duplicateByUrl = await db.importedProduct.findFirst({
@@ -76,14 +77,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let parsedProduct;
 
     try {
-      parsedProduct = await parseSupplierProduct(supplierUrl, pageHtml.length > 1000 ? pageHtml : undefined);
+      parsedProduct = supplier === "Stone Island"
+        ? await parseStoneIslandProduct(supplierUrl, pageHtml.length > 1000 ? pageHtml : undefined)
+        : pageHtml.length > 1000
+          ? await parseVitkacProductFromHtml(supplierUrl, pageHtml)
+          : await parseVitkacProduct(supplierUrl);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
       return {
         ok: false,
         error:
-          "Сайт заблокировал автоматический запрос. Используй Browser Capture либо вставь HTML страницы товара в поле ниже. Деталь ошибки: " +
+          "Сайт заблокировал автоматический запрос. Используй HTML import mode: открой товар в Chrome, Ctrl+U, Ctrl+A, Ctrl+C, вставь HTML в поле и снова нажми Parse product. Деталь: " +
           message,
       };
     }
@@ -108,6 +113,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       eurRate: eurRateForImport,
       plnRate: plnRateForImport,
       gbpRate: settings.currencyRateGbpUah,
+      usdRate: settings.currencyRateUsdUah,
       markupPercent: settings.defaultMarkupPercent,
       roundingRule: settings.roundingRule,
       compareAtEnabled: settings.compareAtEnabled,
@@ -130,7 +136,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "save") {
     const supplierUrl = String(formData.get("supplierUrl") || "");
     const supplierProductId = String(formData.get("supplierProductId") || "");
-    const supplierName = String(formData.get("supplierName") || "Supplier");
+    const supplierName = String(formData.get("supplierName") || "Vitkac");
 
     const existingProduct = await db.importedProduct.findFirst({
       where: {
@@ -256,7 +262,7 @@ export default function ImportProduct() {
       <header className="app-header">
         <div>
           <h1 className="app-title">Import Product</h1>
-          <p className="app-subtitle">Вставьте ссылку Vitkac или Stone Island. URL источников, валюты и правила меняются в разделе Sources и Settings.</p>
+          <p className="app-subtitle">Вставляем ссылку поставщика, проверяем дубли, смотрим preview и редактируем данные перед переносом.</p>
         </div>
         <Link className="btn" to="/app/products">Imported products</Link>
       </header>
@@ -336,7 +342,7 @@ export default function ImportProduct() {
               Если видишь ошибку 403 / bot / access denied: открой товар Vitkac в обычном Chrome, нажми Ctrl+U, потом Ctrl+A, Ctrl+C, вернись сюда и вставь полный HTML ниже. После этого нажми Parse product. Ссылка товара сверху всё равно обязательна.
             </p>
             <div style={{ marginTop: 12 }}>
-              <label htmlFor="pageHtml">Supplier page HTML, optional</label>
+              <label htmlFor="pageHtml">Vitkac page HTML, optional</label>
               <textarea
                 id="pageHtml"
                 name="pageHtml"

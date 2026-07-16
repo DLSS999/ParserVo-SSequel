@@ -1,6 +1,5 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "npm ci --no-audit --no-fund",
-  "buildCommand": "npm run vercel-build",
-  "framework": null
+  "framework": "react-router",
+  "installCommand": "PRISMA_SKIP_POSTINSTALL_GENERATE=true PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts --no-audit --no-fund",
+  "buildCommand": "npm run vercel-build"
 }

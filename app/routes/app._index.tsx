@@ -50,7 +50,8 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="button-row">
-          <Link className="btn btn-primary" to="/app/import">Import product</Link>
+          <Link className="btn btn-primary" to="/app/sources">Sources</Link>
+          <Link className="btn" to="/app/import">Import product</Link>
           <Link className="btn" to="/app/excel-import">Excel import</Link>
           <Link className="btn" to="/app/products">View products</Link>
         </div>

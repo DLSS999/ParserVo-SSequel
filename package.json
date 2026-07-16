@@ -13,7 +13,8 @@
     "vercel-build": "prisma generate && prisma db push --accept-data-loss && react-router build"
   },
   "engines": {
-    "node": "22.x"
+    "node": "22.x",
+    "npm": "10.x"
   },
   "dependencies": {
     "@prisma/client": "^6.16.3",
@@ -37,7 +38,7 @@
   "devDependencies": {
     "@shopify/api-codegen-preset": "^2.0.0",
     "@shopify/polaris-types": "1.0.1",
-    "@types/node": "^22.15.0",
+    "@types/node": "^25.5.2",
     "@types/react": "^18.3.25",
     "@types/react-dom": "^18.3.7",
     "typescript": "^5.9.3",
@@ -49,5 +50,5 @@
   "overrides": {
     "p-map": "^4.0.0"
   },
-  "packageManager": "npm@10.9.4"
+  "packageManager": "npm@10.9.2"
 }
