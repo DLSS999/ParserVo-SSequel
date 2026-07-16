@@ -58,16 +58,33 @@ function uniqueTags(values: string[]) {
 }
 
 export function getCorrectProductMapping(product: ParsedMarketplaceProduct) {
-  const source = ` ${[
+  const productFacts = ` ${[
     product.title,
     product.description,
     product.descriptionHtml,
     product.composition,
     product.productType,
     product.productCategory,
+  ].filter(Boolean).join(" ")} `.toLowerCase();
+
+  const source = ` ${[
+    productFacts,
     product.category,
     product.sourceUrl,
   ].filter(Boolean).join(" ")} `.toLowerCase();
+
+  // A Stone Island catalog path can contain "polos-and-t-shirts" for both
+  // product classes. The product description/title must win over that broad
+  // path, otherwise ordinary T-shirts are incorrectly assigned to Polos.
+  if (/\b(?:t[ -]?shirts?|tee shirts?|tees?)\b|футболк/.test(productFacts)
+      && !/\b(?:polo shirts?|polos?)\b|поло/.test(productFacts)) {
+    return {
+      kind: "tshirt" as const,
+      productType: "Футболки",
+      nameType: "Футболка",
+      taxonomyPath: "Apparel & Accessories > Clothing > Shirts & Tops > T-Shirts",
+    };
+  }
 
   // Stone Island frequently omits the garment class from the visible title.
   // Use the supplier description before the broad source category so a
