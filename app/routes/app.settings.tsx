@@ -68,8 +68,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       currencyRatePlnUah: parseDecimalFormValue(formData.get("currencyRatePlnUah"), 12.19),
       currencyRateGbpUah: parseDecimalFormValue(formData.get("currencyRateGbpUah"), 55),
       currencyRateUsdUah: parseDecimalFormValue(formData.get("currencyRateUsdUah"), 42),
-      currencyRateGbpUah: parseDecimalFormValue(formData.get("currencyRateGbpUah"), 55),
-      currencyRateUsdUah: parseDecimalFormValue(formData.get("currencyRateUsdUah"), 42),
       defaultMarkupPercent: parseDecimalFormValue(formData.get("defaultMarkupPercent"), 60),
       roundingRule: String(formData.get("roundingRule") || "round_to_5"),
       compareAtEnabled: formData.get("compareAtEnabled") === "on",

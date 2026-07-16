@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "remix",
-  "installCommand": "npm install --no-audit --no-fund --legacy-peer-deps",
+  "framework": null,
+  "installCommand": "PRISMA_SKIP_POSTINSTALL_GENERATE=true npm ci --ignore-scripts --no-audit --no-fund --legacy-peer-deps",
   "buildCommand": "npm run vercel-build"
 }
