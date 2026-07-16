@@ -25,6 +25,57 @@ function response(data: unknown, status = 200) {
   return json(data, { status, headers: corsHeaders });
 }
 
+function isStoneIslandCapture(capture: YnapBrowserCapture) {
+  try {
+    const url = new URL(String(capture.url || ""));
+    return String(capture.categoryId || "").startsWith("stone-island:") &&
+      /(^|\.)stoneisland\.com$/i.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function normalizeCapture(capture: YnapBrowserCapture) {
+  if (!isStoneIslandCapture(capture)) return normalizeYnapCapture(capture);
+
+  const originalUrl = capture.url;
+  const productCode = String(capture.productCode || "stone-island-product")
+    .replace(/\.html?$/i, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-");
+
+  // Reuse the proven strict product normalizer while explicitly adapting the
+  // Stone Island payload to a configured menswear category. Actual source URL
+  // and source name are restored immediately after normalization.
+  const compatibleCapture = {
+    ...capture,
+    categoryId: "mrp-clothing",
+    source: "MR_PORTER",
+    gender: "MEN",
+    category: capture.category || "Clothing",
+    brand: capture.brand || "STONE ISLAND",
+    productCode,
+    url: `https://www.mrporter.com/en-pl/mens/product/stone-island/clothing/${productCode}/${productCode}`,
+    media: (capture.media || []).map((item, index) => ({
+      ...item,
+      originalUrl: item.type === "video"
+        ? `https://www.mrporter.com/variants/videos/${productCode}/${index + 1}.mp4`
+        : `https://www.mrporter.com/variants/images/${productCode}/${index + 1}.jpg`,
+    })),
+  } as YnapBrowserCapture;
+
+  const normalized = normalizeYnapCapture(compatibleCapture);
+  normalized.categoryId = capture.categoryId;
+  normalized.sourcePayload = capture;
+  normalized.product.sourceUrl = originalUrl;
+  normalized.product.source = "STONE_ISLAND" as any;
+  normalized.product.brand = "STONE ISLAND";
+  normalized.product.vendor = "STONE ISLAND" as any;
+  normalized.product.category = capture.category || "Clothing";
+  normalized.product.productType = capture.category || "Clothing";
+  normalized.product.tags = ["Men", "STONE ISLAND", "Stone Island Poland"];
+  return normalized;
+}
+
 async function saveImportState(handle: string, patch: Record<string, unknown>) {
   await databaseAdminRequest(
     `parservo_products?handle=eq.${encodeURIComponent(handle)}`,
@@ -45,7 +96,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
   return response({
     ok: true,
-    name: "ParserVo strict NET-A-PORTER / MR PORTER capture API",
+    name: "ParserVo NET-A-PORTER / MR PORTER / Stone Island capture API",
   });
 }
 
@@ -76,7 +127,7 @@ export async function action({ request }: ActionFunctionArgs) {
       return response({ ok: false, error: "Missing product capture payload." }, 400);
     }
 
-    const normalized = normalizeYnapCapture(payload.capture);
+    const normalized = normalizeCapture(payload.capture);
     const stored = await storeYnapCapture(normalized);
     let shopify: any = null;
     let shopifyError: string | null = null;
