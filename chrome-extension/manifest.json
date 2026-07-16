@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ParserVo Stone Island Capture",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "Strict Stone Island catalog capture for ParserVo and Shopify.",
   "permissions": ["activeTab", "alarms", "scripting", "storage", "tabs"],
   "host_permissions": [
