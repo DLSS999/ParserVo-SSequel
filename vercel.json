@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "PRISMA_SKIP_POSTINSTALL_GENERATE=true npm ci --ignore-scripts --no-audit --no-fund --legacy-peer-deps",
-  "buildCommand": "npm run vercel-build"
+  "installCommand": "corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --no-frozen-lockfile",
+  "buildCommand": "pnpm run vercel-build"
 }

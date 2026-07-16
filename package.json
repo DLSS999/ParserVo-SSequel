@@ -11,8 +11,7 @@
     "vercel-build": "prisma generate && react-router build"
   },
   "engines": {
-    "node": "22.x",
-    "npm": "10.x"
+    "node": "22.x"
   },
   "dependencies": {
     "@prisma/client": "^6.16.3",
@@ -47,6 +46,6 @@
   "overrides": {
     "p-map": "^4.0.0"
   },
-  "packageManager": "npm@10.9.2",
+  "packageManager": "pnpm@9.15.9",
   "version": "3.0.1"
 }
