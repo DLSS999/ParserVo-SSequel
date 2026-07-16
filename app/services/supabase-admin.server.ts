@@ -1,5 +1,8 @@
 const DEFAULT_SUPABASE_URL = "https://cuzjuykyelzrvxxbcjry.supabase.co";
 
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
+const RETRY_DELAYS_MS = [250, 750, 1500];
+
 type ShopifySessionLike = {
   shop: string;
   accessToken?: string;
@@ -38,17 +41,44 @@ function headers(key: string, extra: Record<string, string> = {}) {
   return result;
 }
 
+function canRetry(path: string, init: RequestInit) {
+  const method = String(init.method || "GET").toUpperCase();
+  if (["GET", "HEAD", "PUT", "PATCH", "DELETE"].includes(method)) return true;
+  if (method !== "POST") return false;
+  return path.includes("on_conflict=") || String((init.headers as Record<string, string> | undefined)?.Prefer || "").includes("merge-duplicates");
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function rest(path: string, init: RequestInit = {}) {
   const { url, key } = config();
   if (!key) throw new Error("SUPABASE_SECRET_KEY is not configured.");
-  const response = await fetch(`${url}/rest/v1/${path}`, {
-    ...init,
-    headers: headers(key, (init.headers || {}) as Record<string, string>),
-    cache: "no-store",
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Supabase admin ${response.status}: ${text.slice(0, 500)}`);
-  return text ? JSON.parse(text) : null;
+
+  const retryable = canRetry(path, init);
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const response = await fetch(`${url}/rest/v1/${path}`, {
+        ...init,
+        headers: headers(key, (init.headers || {}) as Record<string, string>),
+        cache: "no-store",
+      });
+      const text = await response.text();
+      if (response.ok) return text ? JSON.parse(text) : null;
+
+      const error = new Error(`Supabase admin ${response.status}: ${text.slice(0, 500)}`);
+      lastError = error;
+      if (!retryable || !RETRYABLE_STATUS.has(response.status) || attempt >= RETRY_DELAYS_MS.length) throw error;
+    } catch (error) {
+      lastError = error;
+      if (!retryable || attempt >= RETRY_DELAYS_MS.length) throw error;
+    }
+
+    await wait(RETRY_DELAYS_MS[attempt]);
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Supabase admin request failed.");
 }
 
 export async function persistShopSession(session: ShopifySessionLike) {
