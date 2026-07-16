@@ -1,19 +1,52 @@
-# ParserVo v3
+# ParserVo SSEQUEL v2
 
-Чистое Shopify-приложение для импорта и синхронизации товаров поставщиков.
+Модульное Shopify-приложение и набор независимых парсеров.
 
-## Основные разделы
-- Sources — URL, валюта, курс, наценка и правила каждого источника.
-- Import Product — импорт отдельной карточки через URL/Browser Capture.
-- Excel Import — массовый импорт.
-- Imported Products — каталог базы.
-- Stock Sync — обновление наличия.
-- Settings — общие курсы и Shopify Location.
+> Production restore: стабильная Vercel-конфигурация восстановлена 16.07.2026.
 
-## Vercel
-1. Node.js Version: 22.x.
-2. Environment Variables: SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SHOPIFY_APP_URL, SCOPES, DATABASE_URL.
-3. Build: `npm run vercel-build`.
-4. После первого успешного деплоя выполнить `npx prisma db push` локально либо временно использовать `npm run setup` с production DATABASE_URL.
+## Что изменено
+- Shopify-приложение и существующая авторизация сохранены.
+- YNAP-парсер оставлен отдельной командой.
+- Добавлен независимый Stone Island Sale parser.
+- Общие типы, runner, ограничение параллельности, повторные попытки и JSON-журнал ошибок вынесены в `app/parsers/core`.
+- Worker теперь умеет выполнять Stone Island jobs через BullMQ; без Redis локальный запуск не ломается.
+- Результат Stone Island сохраняется в `data/stone-island/products.json`, `errors.json`, `summary.json`.
 
-В `vercel-build` намеренно нет `prisma db push`, чтобы production-сборка не изменяла схему базы автоматически.
+## Установка
+```bash
+npm install
+npx playwright install chromium
+npx prisma generate
+```
+
+## Быстрая проверка одного товара
+Windows PowerShell:
+```powershell
+$env:MAX_PRODUCTS="1"
+$env:CRAWL_CONCURRENCY="1"
+npm run crawl:stone-island
+```
+
+Полный каталог:
+```powershell
+Remove-Item Env:MAX_PRODUCTS -ErrorAction SilentlyContinue
+npm run crawl:stone-island
+```
+
+## Команды
+- `npm run dev` — Shopify App
+- `npm run build` — production build
+- `npm run typecheck` — TypeScript validation
+- `npm run crawl:stone-island` — Stone Island Sale
+- `npm run crawl:ynap` — старый YNAP crawler
+- `npm run worker` — BullMQ worker, если задан `REDIS_URL`
+
+## Безопасность
+Файл `.env` не должен попадать в Git или ZIP. В репозитории хранится только `.env.example`.
+
+## Архитектура нового парсера
+Каждый новый источник реализует `MarketplaceParser`:
+- `collectProductUrls()`
+- `parseProduct()`
+
+Это позволяет добавлять сайты независимо, не переписывая Shopify-приложение.

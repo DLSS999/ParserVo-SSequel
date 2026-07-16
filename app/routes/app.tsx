@@ -1,123 +1,80 @@
-import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Link, Outlet, useLoaderData, useRouteError } from "react-router";
-import { useEffect, useRef } from "react";
-import { NavMenu } from "@shopify/app-bridge-react";
-import { AppProvider } from "@shopify/shopify-app-react-router/react";
-import { boundary } from "@shopify/shopify-app-react-router/server";
-
+import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { Link, Outlet, useLoaderData, useLocation, useRouteError } from "@remix-run/react";
+import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
+import { boundary } from "@shopify/shopify-app-remix/server";
 import { authenticate } from "../shopify.server";
+import { hasSupabaseAdmin, persistShopSession } from "../services/supabase-admin.server";
 
-const STOCK_SYNC_ACTIVE_KEY = "parservo_background_stock_sync_active";
-
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-
-  return {
-    apiKey: process.env.SHOPIFY_API_KEY || "",
-  };
+const i18n = {
+  Polaris: {
+    Common: { checkbox: "checkbox" },
+    ResourceList: {
+      sortingLabel: "Sort by",
+      defaultItemSingular: "item",
+      defaultItemPlural: "items",
+      showing: "Showing {itemsCount} {resource}",
+      Item: { viewItem: "View details for {itemName}" },
+      selected: "{selectedItemsCount} selected",
+      allItemsSelected: "All {itemsLength}+ {resourceName} are selected",
+      selectAllItems: "Select all {itemsLength}+ {resourceName}",
+      emptySearchResultTitle: "No results found",
+      emptySearchResultDescription: "Try changing the filters or search term",
+      filteringLabel: "Filter",
+      search: "Search",
+    },
+  },
 };
 
-function ParserVoBackgroundStockSyncRunner() {
-  const isTickingRef = useRef(false);
-  const consecutiveErrorsRef = useRef(0);
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const configReady = Boolean(process.env.SHOPIFY_API_KEY && process.env.SHOPIFY_API_SECRET && process.env.SHOPIFY_APP_URL);
+  let sessionStored = false;
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function tickBackgroundStockSync() {
-      if (cancelled || isTickingRef.current) return;
-      if (window.localStorage.getItem(STOCK_SYNC_ACTIVE_KEY) !== "1") return;
-
-      isTickingRef.current = true;
-
+  if (configReady) {
+    const auth = await authenticate.admin(request);
+    if (hasSupabaseAdmin()) {
       try {
-        const formData = new FormData();
-        formData.set("intent", "tick");
-
-        const response = await fetch(`/api/stock-sync-job${window.location.search}`, {
-          method: "POST",
-          body: formData,
-          credentials: "same-origin",
-          headers: {
-            Accept: "application/json",
-            "X-Requested-With": "ParserVoBackgroundStockSync",
-          },
+        sessionStored = await persistShopSession(auth.session as {
+          shop: string;
+          accessToken?: string;
+          scope?: string;
+          isOnline?: boolean;
         });
-
-        const rawText = await response.text();
-        const contentType = response.headers.get("content-type") || "";
-
-        if (!contentType.includes("application/json")) {
-          throw new Error(`Stock sync API returned non JSON (${response.status}): ${rawText.replace(/\s+/g, " ").slice(0, 220)}`);
-        }
-
-        const data = JSON.parse(rawText);
-        if (!response.ok || data?.error) throw new Error(data?.error || `Stock sync API error ${response.status}`);
-
-        consecutiveErrorsRef.current = 0;
-        window.dispatchEvent(new CustomEvent("parservo-stock-sync-job", { detail: data }));
-
-        const status = data?.job?.status;
-        if (status && status !== "running") {
-          window.localStorage.removeItem(STOCK_SYNC_ACTIVE_KEY);
-        }
       } catch (error) {
-        consecutiveErrorsRef.current += 1;
-        window.dispatchEvent(new CustomEvent("parservo-stock-sync-job", {
-          detail: {
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        }));
-
-        if (consecutiveErrorsRef.current >= 10) {
-          window.localStorage.removeItem(STOCK_SYNC_ACTIVE_KEY);
-        }
-      } finally {
-        isTickingRef.current = false;
+        console.error("ParserVo session persistence failed", error);
       }
     }
+  }
 
-    tickBackgroundStockSync();
-    const timer = window.setInterval(tickBackgroundStockSync, 2500);
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === STOCK_SYNC_ACTIVE_KEY && event.newValue === "1") tickBackgroundStockSync();
-    };
+  return json({
+    apiKey: process.env.SHOPIFY_API_KEY || "",
+    configReady,
+    sessionStored,
+  });
+};
 
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("parservo-stock-sync-started", tickBackgroundStockSync as EventListener);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("parservo-stock-sync-started", tickBackgroundStockSync as EventListener);
-    };
-  }, []);
-
-  return null;
-}
-
-export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
-
+export default function AppLayout() {
+  const { apiKey, configReady } = useLoaderData<typeof loader>();
+  const location = useLocation();
   return (
-    <AppProvider embedded apiKey={apiKey}>
-      <NavMenu>
-        <Link to="/app" rel="home">
-          Dashboard
-        </Link>
-        <Link to="/app/sources">Sources</Link>
-        <Link to="/app/import">Import Product</Link>
-        <Link to="/app/excel-import">Excel Import</Link>
-        <Link to="/app/products">Imported Products</Link>
-        <Link to="/app/stock-sync">Stock Sync</Link>
-        <Link to="/app/logs">Sync Logs</Link>
-        <Link to="/app/settings">Settings</Link>
-      </NavMenu>
-      <ParserVoBackgroundStockSyncRunner />
-      <Outlet />
-    </AppProvider>
+    <>
+      {configReady ? <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" data-api-key={apiKey} /> : null}
+      <PolarisAppProvider i18n={i18n}>
+        <header className="pv-shell-header">
+          <div className="pv-shipping-bar">PARSERVO / STONE ISLAND CATALOG SYSTEM</div>
+          <div className="pv-brand-row">
+            <div className="pv-brand-meta">SSEQUEL / SHOPIFY</div>
+            <div className="pv-wordmark">PARSERVO</div>
+            <div className="pv-brand-meta pv-brand-meta-right">STATUS / CONNECTED</div>
+          </div>
+          <nav className="pv-app-nav">
+            <Link className={location.pathname === "/app" ? "active" : ""} to="/app">CATALOG</Link>
+            <Link className={location.pathname.startsWith("/app/crawler") ? "active" : ""} to="/app/crawler">PARSER / QUEUE</Link>
+          </nav>
+        </header>
+        <Outlet />
+      </PolarisAppProvider>
+    </>
   );
 }
 
@@ -125,6 +82,4 @@ export function ErrorBoundary() {
   return boundary.error(useRouteError());
 }
 
-export const headers: HeadersFunction = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};
+export const headers: HeadersFunction = (headersArgs) => boundary.headers(headersArgs);

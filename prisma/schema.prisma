@@ -3,192 +3,103 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
-model Session {
-  id                  String    @id
-  shop                String
-  state               String
-  isOnline            Boolean   @default(false)
-  scope               String?
-  expires             DateTime?
-  accessToken         String
-  userId              BigInt?
-  firstName           String?
-  lastName            String?
-  email               String?
-  accountOwner        Boolean   @default(false)
-  locale              String?
-  collaborator        Boolean?  @default(false)
-  emailVerified       Boolean?  @default(false)
-  refreshToken        String?
-  refreshTokenExpires DateTime?
+enum SourceName {
+  NET_A_PORTER
+  MR_PORTER
 }
 
-model ImportedProduct {
-  id                    String            @id @default(cuid())
-  shop                  String
-  shopifyProductId       String?
-  shopifyProductGid      String?
-  shopifyProductTitle    String?
-
-  supplierName          String
-  supplierUrl           String
-  supplierProductId     String
-  supplierSymbol        String?
-  supplierCurrency      String?
-  exchangeRateUsed      Float?
-  supplierPrice         Float?
-  supplierOldPrice      Float?
-
-  brand                 String?
-  title                 String
-  originalTitle         String?
-  description           String?
-  originalDescription   String?
-
-  color                 String?
-  colorUa               String?
-  gender                String?
-  genderUa              String?
-  category              String?
-  categoryUa            String?
-  productType           String?
-  material              String?
-  composition           String?
-  countryOfOrigin       String?
-  modelCode             String?
-  breadcrumbs           String?
-
-  costPriceUah          Float?
-  salePriceUah          Float?
-  compareAtPriceUah     Float?
-  markupPercent         Float?
-
-  imageUrl              String?
-  imagesJson            String?
-
-  status                String            @default("imported")
-  stockSourceStatus     String            @default("supplier_available")
-  syncEnabled           Boolean           @default(true)
-  lastSyncedAt          DateTime?
-
-  variants              ImportedVariant[]
-  syncLogs              SyncLog[]
-
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
-
-  @@unique([shop, supplierUrl])
-  @@unique([shop, supplierProductId])
+enum Gender {
+  WOMEN
+  MEN
 }
 
-model ImportedVariant {
-  id                    String          @id @default(cuid())
-  importedProductId      String
-  importedProduct        ImportedProduct @relation(fields: [importedProductId], references: [id], onDelete: Cascade)
-
-  shopifyVariantId       String?
-  shopifyVariantGid      String?
-  shopifyInventoryItemId String?
-
-  supplierVariantId      String?
-  size                  String
-  supplierSizeLabel      String?
-  sku                   String?
-  available             Boolean         @default(false)
-  lastAvailable         Boolean         @default(false)
-
-  price                 Float?
-  compareAtPrice         Float?
-
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
+enum JobStatus {
+  NOT_STARTED
+  QUEUED
+  PARSING_CATEGORY_PAGES
+  PARSING_PRODUCT_PAGES
+  DOWNLOADING_IMAGES
+  PROCESSING_IMAGES
+  READY_FOR_PREVIEW
+  IMPORTING
+  IMPORTED
+  PARTIAL
+  ERROR
 }
 
-model SyncLog {
-  id                 String           @id @default(cuid())
-  shop               String
-  importedProductId   String?
-  importedProduct     ImportedProduct? @relation(fields: [importedProductId], references: [id], onDelete: SetNull)
-
-  supplierName       String?
-  supplierUrl        String?
-  status             String
-  message            String?
-  oldAvailableSizes  String?
-  newAvailableSizes  String?
-  errorCode          String?
-  errorMessage       String?
-
-  startedAt          DateTime?
-  finishedAt         DateTime?
-  createdAt          DateTime         @default(now())
+enum ImportStatus {
+  DRAFT
+  READY
+  IMPORTED
+  ERROR
+  SKIPPED
 }
 
-model AppSettings {
-  id                      String   @id @default(cuid())
-  shop                    String   @unique
-
-  currencyRateEurUah       Float    @default(45)
-  currencyRatePlnUah       Float    @default(12.19)
-  currencyRateGbpUah       Float    @default(55)
-  currencyRateUsdUah       Float    @default(42)
-  defaultMarkupPercent     Float    @default(60)
-  roundingRule             String   @default("round_to_5")
-  compareAtEnabled         Boolean  @default(true)
-  compareAtFormula         String   @default("cinq_compare_at_v2")
-
-  syncIntervalHours        Int      @default(6)
-  defaultShopifyLocationId String?
-  autoDraftSoldOut         Boolean  @default(true)
-  autoActivateAvailable    Boolean  @default(true)
-  automaticSyncEnabled     Boolean  @default(false)
-
-  translationEnabled       Boolean  @default(true)
-  targetLanguage           String   @default("uk")
-
-  browserCaptureToken      String?  @unique
-
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+model Shop {
+  id          String   @id @default(cuid())
+  shop        String   @unique
+  accessToken String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
-model ImportQueueItem {
-  id                 String   @id @default(cuid())
-  shop               String
-  supplierName       String   @default("Vitkac")
-  supplierUrl        String
-  supplierProductId  String?
-  status             String   @default("queued")
-  note               String?
-  importedProductId  String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  @@unique([shop, supplierUrl])
+model SourceCategory {
+  id               String    @id @default(cuid())
+  source           SourceName
+  gender           Gender
+  category         String
+  url              String
+  pages            Int
+  expectedResults  Int
+  collectedResults Int       @default(0)
+  status           JobStatus @default(NOT_STARTED)
+  lastRunAt        DateTime?
+  products         Product[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
-model SupplierSource {
-  id                     String   @id @default(cuid())
-  shop                   String
-  name                   String
-  code                   String
-  baseUrl                String
-  catalogUrl             String
-  currency               String   @default("PLN")
-  exchangeRate           Float    @default(12.19)
-  markupPercent          Float    @default(60)
-  defaultQuantity        Int      @default(5)
-  captureMode            String   @default("browser")
-  enabled                Boolean  @default(true)
-  updateExisting         Boolean  @default(true)
-  hideUnavailable        Boolean  @default(false)
-  autoImport             Boolean  @default(false)
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+model Product {
+  id               String          @id @default(cuid())
+  source           SourceName
+  gender           Gender
+  category         String
+  brand            String?
+  title            String
+  price            Float?
+  compareAtPrice   Float?
+  currency         String          @default("EUR")
+  color            String?
+  sizes            Json?
+  description      String?
+  composition      String?
+  sku              String?
+  sourceUrl        String          @unique
+  imageUrls        Json?
+  originalImages   Json?
+  processedImage   String?
+  shopifyProductId String?
+  importStatus     ImportStatus    @default(DRAFT)
 
-  @@unique([shop, code])
+  categorySourceId String?
+  categorySource   SourceCategory? @relation(fields: [categorySourceId], references: [id])
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+}
+
+model ParseRun {
+  id               String    @id @default(cuid())
+  source           SourceName
+  category         String
+  status           JobStatus @default(QUEUED)
+  expectedResults  Int
+  collectedResults Int       @default(0)
+  message          String?
+  startedAt        DateTime  @default(now())
+  finishedAt       DateTime?
 }

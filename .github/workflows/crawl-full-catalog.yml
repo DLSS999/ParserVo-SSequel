@@ -1,0 +1,87 @@
+name: Crawl NET-A-PORTER and MR PORTER (local runner)
+
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: "all or category id (nap-clothing, mrp-shoes, etc.)"
+        required: true
+        default: "all"
+        type: string
+      max_products:
+        description: "0 = no limit; use 5 for first test"
+        required: true
+        default: "0"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parservo-full-catalog-local
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 720
+    env:
+      SUPABASE_URL: https://cuzjuykyelzrvxxbcjry.supabase.co
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      SHOPIFY_API_KEY: ${{ secrets.SHOPIFY_API_KEY }}
+      SHOPIFY_API_SECRET: ${{ secrets.SHOPIFY_API_SECRET }}
+      SHOPIFY_SHOP_DOMAIN: ${{ secrets.SHOPIFY_SHOP_DOMAIN }}
+      CRAWL_CATEGORY: ${{ inputs.category }}
+      MAX_PRODUCTS: ${{ inputs.max_products }}
+      MAX_SYNC_PRODUCTS: ${{ inputs.max_products }}
+      CRAWL_CONCURRENCY: "2"
+      CRAWL_HEADLESS: "true"
+      CRAWL_BROWSER_CHANNEL: "chrome"
+      DEFAULT_QUANTITY: "5"
+      EUR_RATE: ${{ vars.EUR_RATE || '45' }}
+      PLN_RATE: ${{ vars.PLN_RATE || '12.19' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        shell: powershell
+        run: npm install --legacy-peer-deps
+
+      - name: Verify required secrets
+        shell: powershell
+        run: |
+          $required = @(
+            "SUPABASE_SECRET_KEY",
+            "SHOPIFY_API_KEY",
+            "SHOPIFY_API_SECRET",
+            "SHOPIFY_SHOP_DOMAIN"
+          )
+          foreach ($name in $required) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "$name repository secret is missing"
+            }
+          }
+
+      - name: Crawl filtered catalog through local Chrome
+        shell: powershell
+        run: npm run crawl:catalog
+
+      - name: Synchronize parsed products to Shopify
+        shell: powershell
+        run: npm run sync:shopify
+
+      - name: Upload crawler diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crawl-debug-${{ github.run_number }}
+          path: crawl-debug/
+          if-no-files-found: ignore
+          retention-days: 7
