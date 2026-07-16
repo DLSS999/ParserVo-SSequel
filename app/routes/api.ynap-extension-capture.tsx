@@ -25,6 +25,17 @@ function response(data: unknown, status = 200) {
   return json(data, { status, headers: corsHeaders });
 }
 
+function numericPrice(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const raw = String(value ?? "")
+    .replace(/\s/g, "")
+    .replace(/,(?=\d{3}(?:\D|$))/g, "")
+    .replace(/,/g, ".")
+    .replace(/[^0-9.-]/g, "");
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function isStoneIslandCapture(capture: YnapBrowserCapture) {
   try {
     const url = new URL(String(capture.url || ""));
@@ -43,9 +54,21 @@ function normalizeCapture(capture: YnapBrowserCapture) {
     .replace(/\.html?$/i, "")
     .replace(/[^a-zA-Z0-9_-]+/g, "-");
 
-  // Reuse the proven strict product normalizer while explicitly adapting the
-  // Stone Island payload to a configured menswear category. Actual source URL
-  // and source name are restored immediately after normalization.
+  const sourceCurrency = String(capture.currency || "PLN").toUpperCase();
+  const sourcePrice = numericPrice(capture.price);
+  const sourceCompareAtPrice = numericPrice(capture.compareAtPrice) || null;
+  const plnRate = numericPrice(capture.rates?.pln) || 12.19;
+  const eurRate = numericPrice(capture.rates?.eur) || 55;
+
+  // The proven strict YNAP normalizer has a EUR-oriented safety ceiling of 2000.
+  // Convert PLN values to an equivalent EUR amount only for validation/pricing.
+  // Original PLN values are restored on the normalized product below.
+  const conversionFactor = sourceCurrency === "PLN" ? plnRate / eurRate : 1;
+  const strictPrice = sourcePrice * conversionFactor;
+  const strictCompareAtPrice = sourceCompareAtPrice
+    ? sourceCompareAtPrice * conversionFactor
+    : null;
+
   const compatibleCapture = {
     ...capture,
     categoryId: "mrp-clothing",
@@ -54,6 +77,9 @@ function normalizeCapture(capture: YnapBrowserCapture) {
     category: capture.category || "Clothing",
     brand: capture.brand || "STONE ISLAND",
     productCode,
+    currency: sourceCurrency === "PLN" ? "EUR" : sourceCurrency,
+    price: strictPrice,
+    compareAtPrice: strictCompareAtPrice,
     url: `https://www.mrporter.com/en-pl/mens/product/stone-island/clothing/${productCode}/${productCode}`,
     media: (capture.media || []).map((item, index) => ({
       ...item,
@@ -73,6 +99,9 @@ function normalizeCapture(capture: YnapBrowserCapture) {
   normalized.product.category = capture.category || "Clothing";
   normalized.product.productType = capture.category || "Clothing";
   normalized.product.tags = ["Men", "STONE ISLAND", "Stone Island Poland"];
+  normalized.product.price = sourcePrice;
+  normalized.product.compareAtPrice = sourceCompareAtPrice;
+  normalized.product.currency = sourceCurrency;
   return normalized;
 }
 
@@ -183,6 +212,18 @@ export async function action({ request }: ActionFunctionArgs) {
       currentJobId: payload.capture.jobId || null,
     });
 
+    if (shopifyError) {
+      return response({
+        ok: false,
+        error: `Shopify import failed: ${shopifyError}`,
+        product: {
+          handle: stored.handle,
+          brand: normalized.product.brand,
+          title: normalized.product.title,
+        },
+      }, 500);
+    }
+
     return response({
       ok: true,
       product: {
@@ -194,7 +235,7 @@ export async function action({ request }: ActionFunctionArgs) {
         videos: stored.videos,
       },
       shopify,
-      shopifyError,
+      shopifyError: null,
     });
   } catch (error) {
     return response({
