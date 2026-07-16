@@ -1,6 +1,7 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import {
   claimBrowserCrawlJob,
+  databaseAdminRequest,
   recordBrowserHeartbeat,
   updateBrowserCrawlJob,
   verifyBrowserCaptureKey,
@@ -16,6 +17,13 @@ const corsHeaders = {
 
 function reply(data: unknown, status = 200) {
   return json(data, { status, headers: corsHeaders });
+}
+
+async function jobStatus(jobId: string, shop: string) {
+  const rows = await databaseAdminRequest(
+    `parservo_crawl_jobs?id=eq.${encodeURIComponent(jobId)}&shop_domain=eq.${encodeURIComponent(shop)}&select=id,status&limit=1`,
+  );
+  return Array.isArray(rows) ? rows[0] || null : null;
 }
 
 function progressPatch(payload: Record<string, unknown>) {
@@ -35,8 +43,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
   return reply({
     ok: true,
-    name: "ParserVo YNAP Chrome queue API",
-    actions: ["heartbeat", "test", "claim", "progress", "complete", "error"],
+    name: "ParserVo Stone Island Chrome queue API",
+    version: "2.4.0",
+    actions: ["heartbeat", "test", "claim", "job-status", "progress", "complete", "error"],
   });
 }
 
@@ -121,6 +130,22 @@ export async function action({ request }: ActionFunctionArgs) {
 
     if (!payload.jobId) {
       return reply({ ok: false, error: "Missing jobId." }, 400);
+    }
+
+    const currentJob = await jobStatus(String(payload.jobId), shop);
+    if (!currentJob) return reply({ ok: false, error: "Job not found for this shop." }, 404);
+
+    if (operation === "job-status") {
+      return reply({
+        ok: true,
+        status: currentJob.status,
+        cancelled: currentJob.status === "CANCELLED",
+        terminal: ["COMPLETED", "PARTIAL", "ERROR", "CANCELLED"].includes(currentJob.status),
+      });
+    }
+
+    if (currentJob.status === "CANCELLED") {
+      return reply({ ok: true, status: "CANCELLED", cancelled: true });
     }
 
     if (operation === "progress") {

@@ -164,16 +164,25 @@ async function deleteMedia(admin: AdminClient, productId: string, mediaIds: stri
   }
 }
 
-function mappedQuantity(raw: number | null | undefined, available: boolean | null | undefined, fallback: number) {
+function mappedQuantity(
+  raw: number | null | undefined,
+  available: boolean | null | undefined,
+  fallback: number,
+  preserveExact: boolean,
+) {
   if (available === false || raw === 0) return 0;
-  if (raw === 1) return 1;
-  if (typeof raw === "number" && raw > 1) return 5;
-  if (available === true) return 5;
-  if (fallback === 1) return 1;
-  return fallback > 1 ? 5 : 0;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const normalized = Math.max(0, Math.trunc(raw));
+    if (preserveExact) return normalized;
+    if (normalized === 1) return 1;
+    if (normalized > 1) return 5;
+  }
+  if (available === true) return preserveExact ? Math.max(0, Math.trunc(fallback)) : (fallback === 1 ? 1 : fallback > 1 ? 5 : 0);
+  return Math.max(0, Math.trunc(fallback));
 }
 
 function variantsFor(product: ParsedMarketplaceProduct, settings: StrictSyncSettings): ParsedMarketplaceVariant[] {
+  const preserveExact = product.source === "STONE_ISLAND";
   const rows = product.variants?.length
     ? [...product.variants].sort((a, b) => a.position - b.position)
     : sortSizesForShopify(product.sizes.length ? product.sizes : ["Default Title"]).map((size, index) => ({
@@ -186,7 +195,7 @@ function variantsFor(product: ParsedMarketplaceProduct, settings: StrictSyncSett
   return rows
     .map((variant) => ({
       ...variant,
-      quantity: mappedQuantity(variant.quantity, variant.available, settings.defaultQuantity),
+      quantity: mappedQuantity(variant.quantity, variant.available, settings.defaultQuantity, preserveExact),
     }))
     .filter((variant) => variant.quantity > 0);
 }
@@ -195,13 +204,16 @@ function isSupportedPublicMediaUrl(urlValue: string) {
   try {
     const url = new URL(urlValue);
     if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+
     const hostname = url.hostname.toLowerCase();
     const pathname = url.pathname.toLowerCase();
+
     if (pathname.includes("/storage/v1/object/public/parservo-media/")) return true;
     if (hostname === "cdn.shopify.com" || hostname.endsWith(".cdn.shopify.com")) return true;
     if (hostname === "stoneisland-cdn.thron.com" || hostname.endsWith(".thron.com")) {
       return pathname.includes("/delivery/public/image/stoneisland/");
     }
+
     return false;
   } catch {
     return false;
@@ -279,6 +291,9 @@ export async function syncProductToShopifyStrict(
     && ["DEFAULT TITLE"].includes(variants[0].size.toUpperCase());
   const sizeOptionName = defaultVariant ? "Title" : "Розмір";
   const color = String(product.color || "").replace(/^colou?r\s*:\s*/i, "").trim();
+  if (product.source === "STONE_ISLAND" && !color) {
+    throw new Error("Stone Island product color is missing.");
+  }
   const hasColor = Boolean(color);
   const { images, videos } = splitMedia(product.media);
   const exactImages = images.filter((item) => isSupportedPublicMediaUrl(item.url)).slice(0, 5);

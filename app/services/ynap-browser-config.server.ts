@@ -21,9 +21,10 @@ function stoneIslandConfig(categoryId: string) {
   if (!categoryId.startsWith(STONE_PREFIX)) return null;
 
   let payload: StonePayload;
+  let parsed: URL;
   try {
     payload = JSON.parse(decodeURIComponent(categoryId.slice(STONE_PREFIX.length))) as StonePayload;
-    const parsed = new URL(payload.url);
+    parsed = new URL(payload.url);
     if (!/(^|\.)stoneisland\.com$/i.test(parsed.hostname)) return null;
     if (!/^https?:$/.test(parsed.protocol)) return null;
   } catch {
@@ -32,12 +33,14 @@ function stoneIslandConfig(categoryId: string) {
 
   const plnRate = Number(payload.plnRate || 12.19);
   const quantity = Math.max(0, Math.trunc(Number(payload.quantity ?? 5)));
+  const gender = /\/women\//i.test(parsed.pathname) ? "WOMEN" : "MEN";
+  const category = /\/sales?\//i.test(parsed.pathname) ? "Sale" : "Catalog";
 
   return {
     id: categoryId,
     source: "STONE_ISLAND",
-    gender: "MEN",
-    category: "Sale",
+    gender,
+    category,
     baseUrl: payload.url,
     catalogUrl: payload.url,
     currency: "PLN",
@@ -45,7 +48,7 @@ function stoneIslandConfig(categoryId: string) {
     defaultQuantity: quantity,
     brandFacet: "",
     priceFacet: "",
-    brands: ["STONE ISLAND"],
+    brands: ["Stone Island"],
     pages: 1,
     expected: 0,
     pageUrls: [payload.url],
