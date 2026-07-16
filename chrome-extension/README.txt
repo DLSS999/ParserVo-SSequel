@@ -1,9 +1,12 @@
-ParserVo Stone Island Capture 2.4.0
+ParserVo Stone Island Capture 2.5.0
 
 Versioned Stone Island-only capture agent for ParserVo.
 
 Validated behavior:
+- repeatedly clicks Stone Island LOAD MORE until the button disappears or the requested product limit is reached;
+- waits for new product cards after every click and performs a final lazy-render pass;
 - accepts only real Stone Island product URLs ending in a full L... style/color code;
+- deduplicates exact product URLs;
 - SKU is read from the product URL, not from the COMPLIMENTARY SHIPPING banner;
 - captures current price and compare-at price separately;
 - preserves the exact selected color;
