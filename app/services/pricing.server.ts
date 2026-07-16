@@ -56,12 +56,16 @@ export function calculatePricing(input: PricingInput) {
   const costPriceUah = roundPrice(supplierPrice * exchangeRateUsed, roundingRule);
   const salePriceUah = calculateSale(costPriceUah, roundingRule);
 
+  // The markup is calculated once from the current supplier price and then
+  // applied unchanged to the supplier's original price. This keeps the visible
+  // discount honest: both Shopify prices include exactly the same store margin.
+  const markupUah = Math.max(0, salePriceUah - costPriceUah);
   const supplierOldPrice = Math.max(0, toDecimalNumber(input.supplierOldPrice, 0));
-  const compareAtPriceUah = input.compareAtEnabled !== false && supplierOldPrice > supplierPrice
-    ? Math.max(
-        salePriceUah,
-        calculateSale(roundPrice(supplierOldPrice * exchangeRateUsed, roundingRule), roundingRule),
-      )
+  const oldCostPriceUah = supplierOldPrice > supplierPrice
+    ? roundPrice(supplierOldPrice * exchangeRateUsed, roundingRule)
+    : null;
+  const compareAtPriceUah = input.compareAtEnabled !== false && oldCostPriceUah
+    ? Math.max(salePriceUah, roundPrice(oldCostPriceUah + markupUah, roundingRule))
     : null;
 
   return {
@@ -70,6 +74,9 @@ export function calculatePricing(input: PricingInput) {
     salePriceUah,
     compareAtPriceUah,
     supplierPrice,
+    supplierOldPrice: supplierOldPrice || null,
+    oldCostPriceUah,
+    markupUah,
     profitUah: salePriceUah - costPriceUah,
     discountAmountUah: compareAtPriceUah ? compareAtPriceUah - salePriceUah : null,
     roundingRule,
