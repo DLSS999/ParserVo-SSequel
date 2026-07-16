@@ -11,33 +11,44 @@ import {
 
 const STONE_PREFIX = "stone-island:";
 
+type StonePayload = {
+  url: string;
+  plnRate?: number;
+  quantity?: number;
+};
+
 function stoneIslandConfig(categoryId: string) {
   if (!categoryId.startsWith(STONE_PREFIX)) return null;
 
-  const encodedUrl = categoryId.slice(STONE_PREFIX.length);
-  let catalogUrl: string;
-
+  let payload: StonePayload;
   try {
-    catalogUrl = decodeURIComponent(encodedUrl);
-    const parsed = new URL(catalogUrl);
+    payload = JSON.parse(decodeURIComponent(categoryId.slice(STONE_PREFIX.length))) as StonePayload;
+    const parsed = new URL(payload.url);
     if (!/(^|\.)stoneisland\.com$/i.test(parsed.hostname)) return null;
     if (!/^https?:$/.test(parsed.protocol)) return null;
   } catch {
     return null;
   }
 
+  const plnRate = Number(payload.plnRate || 12.19);
+  const quantity = Math.max(0, Math.trunc(Number(payload.quantity ?? 5)));
+
   return {
     id: categoryId,
     source: "STONE_ISLAND",
     gender: "MEN",
     category: "Sale",
-    baseUrl: catalogUrl,
+    baseUrl: payload.url,
+    catalogUrl: payload.url,
+    currency: "PLN",
+    plnRate: Number.isFinite(plnRate) && plnRate > 0 ? plnRate : 12.19,
+    defaultQuantity: quantity,
     brandFacet: "",
     priceFacet: "",
     brands: ["STONE ISLAND"],
     pages: 1,
     expected: 0,
-    pageUrls: [catalogUrl],
+    pageUrls: [payload.url],
   };
 }
 
