@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const DEFAULT_SUPABASE_URL = "https://cuzjuykyelzrvxxbcjry.supabase.co";
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
+const RETRY_DELAYS_MS = [250, 750, 1500];
 
 function databaseConfig() {
   const url = process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
@@ -19,19 +21,48 @@ function apiHeaders(key: string, prefer?: string) {
   return result;
 }
 
+function canRetryDatabaseRequest(path: string, init: RequestInit) {
+  const method = String(init.method || "GET").toUpperCase();
+  if (["GET", "HEAD", "PUT", "PATCH", "DELETE"].includes(method)) return true;
+  if (method !== "POST") return false;
+  return path.startsWith("parservo_agents?on_conflict=");
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function databaseRequest(path: string, init: RequestInit = {}) {
   const { url, key } = databaseConfig();
-  const response = await fetch(`${url}/rest/v1/${path}`, {
-    ...init,
-    headers: {
-      ...apiHeaders(key),
-      ...((init.headers || {}) as Record<string, string>),
-    },
-    cache: "no-store",
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Supabase browser capture ${response.status}: ${text.slice(0, 600)}`);
-  return text ? JSON.parse(text) : null;
+  const retryable = canRetryDatabaseRequest(path, init);
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(`${url}/rest/v1/${path}`, {
+        ...init,
+        headers: {
+          ...apiHeaders(key),
+          ...((init.headers || {}) as Record<string, string>),
+        },
+        cache: "no-store",
+      });
+    } catch (error) {
+      lastError = error;
+      if (!retryable || attempt >= RETRY_DELAYS_MS.length) throw error;
+      await wait(RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+
+    const text = await response.text();
+    if (response.ok) return text ? JSON.parse(text) : null;
+
+    const error = new Error(`Supabase browser capture ${response.status}: ${text.slice(0, 600)}`);
+    lastError = error;
+    if (!retryable || !RETRYABLE_STATUS.has(response.status) || attempt >= RETRY_DELAYS_MS.length) throw error;
+    await wait(RETRY_DELAYS_MS[attempt]);
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Supabase browser capture request failed.");
 }
 
 export function browserCaptureKey(shopDomain: string) {
