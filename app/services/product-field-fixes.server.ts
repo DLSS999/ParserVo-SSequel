@@ -4,11 +4,27 @@ import { getProductMapping } from "./product-mapping.server";
 export function getCorrectProductMapping(product: ParsedMarketplaceProduct) {
   const source = ` ${[
     product.title,
+    product.description,
+    product.descriptionHtml,
+    product.composition,
     product.productType,
     product.productCategory,
     product.category,
     product.sourceUrl,
   ].filter(Boolean).join(" ")} `.toLowerCase();
+
+  // Stone Island frequently omits the garment class from the visible title.
+  // Use the supplier description before the broad source category so a
+  // crewneck sweatshirt is not incorrectly classified as a hoodie.
+  if (/\b(?:crewneck|crew neck|sweatshirts?)\b|світшот/.test(source)
+      && !/\b(?:hoodie|hooded|zip[-\s]?hoodie)\b|худі/.test(source)) {
+    return {
+      kind: "sweatshirt" as const,
+      productType: "Світшоти",
+      nameType: "Світшот",
+      taxonomyPath: "Apparel & Accessories > Clothing > Activewear > Activewear Sweatshirts & Hoodies > Sweatshirts",
+    };
+  }
 
   if (/\b(capris?|cropped trousers?|cropped pants?)\b|капрі/.test(source)) {
     return {
