@@ -1,14 +1,27 @@
 importScripts("background.js");
 
 collectProductLinks = async function collectProductLinksWithPersistentCatalogState(catalogUrl, limit, loadWaitMs) {
-  const tab = await chrome.tabs.create({ url: catalogUrl, active: true });
+  let tab = await chrome.tabs.create({ url: catalogUrl, active: true });
   const allLinks = new Set();
   let pageTotal = 0;
   let successfulClicks = 0;
   let reloads = 0;
   let lastSnapshot = null;
 
+  const ensureCatalogTab = async () => {
+    try {
+      await chrome.tabs.get(tab.id);
+      return;
+    } catch {
+      tab = await chrome.tabs.create({ url: catalogUrl, active: true });
+      reloads += 1;
+      await waitForTab(tab.id, 60000);
+      await sleep(Math.max(5000, Number(loadWaitMs || 4500)));
+    }
+  };
+
   const snapshot = async () => {
+    await ensureCatalogTab();
     const injected = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
@@ -114,6 +127,7 @@ collectProductLinks = async function collectProductLinksWithPersistentCatalogSta
   };
 
   const clickLoadMore = async () => {
+    await ensureCatalogTab();
     const injected = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
