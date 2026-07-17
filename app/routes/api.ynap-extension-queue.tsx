@@ -44,8 +44,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return reply({
     ok: true,
     name: "ParserVo Stone Island Chrome queue API",
-    version: "2.4.0",
-    actions: ["heartbeat", "test", "claim", "job-status", "progress", "complete", "error"],
+    version: "2.9.2",
+    actions: [
+      "heartbeat",
+      "test",
+      "claim",
+      "job-status",
+      "progress",
+      "complete",
+      "error",
+      "cancel",
+      "cancel-current",
+    ],
   });
 }
 
@@ -128,6 +138,35 @@ export async function action({ request }: ActionFunctionArgs) {
       });
     }
 
+    if (operation === "cancel-current") {
+      const cancelled = await databaseAdminRequest(
+        `parservo_crawl_jobs?shop_domain=eq.${encodeURIComponent(shop)}&status=in.(QUEUED,RUNNING)`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify({
+            status: "CANCELLED",
+            phase: "DONE",
+            finished_at: new Date().toISOString(),
+            message: payload.message || "Cancelled from Chrome Capture",
+          }),
+        },
+      );
+      await recordBrowserHeartbeat({
+        shopDomain: shop,
+        agentId,
+        version: payload.version,
+        status: "ONLINE",
+        message: "Queue cancelled",
+        currentJobId: null,
+      });
+      return reply({
+        ok: true,
+        status: "CANCELLED",
+        cancelled: Array.isArray(cancelled) ? cancelled.length : 0,
+      });
+    }
+
     if (!payload.jobId) {
       return reply({ ok: false, error: "Missing jobId." }, 400);
     }
@@ -142,6 +181,24 @@ export async function action({ request }: ActionFunctionArgs) {
         cancelled: currentJob.status === "CANCELLED",
         terminal: ["COMPLETED", "PARTIAL", "ERROR", "CANCELLED"].includes(currentJob.status),
       });
+    }
+
+    if (operation === "cancel") {
+      await updateBrowserCrawlJob(payload.jobId, {
+        status: "CANCELLED",
+        phase: "DONE",
+        finished_at: new Date().toISOString(),
+        message: payload.message || "Cancelled from Chrome Capture",
+      });
+      await recordBrowserHeartbeat({
+        shopDomain: shop,
+        agentId,
+        version: payload.version,
+        status: "ONLINE",
+        message: "Job cancelled",
+        currentJobId: null,
+      });
+      return reply({ ok: true, status: "CANCELLED", cancelled: true });
     }
 
     if (currentJob.status === "CANCELLED") {
