@@ -1,6 +1,7 @@
 const DEFAULT_SUPABASE_URL = "https://cuzjuykyelzrvxxbcjry.supabase.co";
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 const RETRY_DELAYS_MS = [250, 750, 1500];
+const MIN_CHROME_CAPTURE_VERSION = "2.9.4";
 
 export type CrawlJobStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "PARTIAL" | "ERROR" | "CANCELLED";
 
@@ -57,6 +58,21 @@ function headers(key: string, prefer?: string) {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function versionParts(value: string | null | undefined) {
+  const match = String(value || "").trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  return match ? match.slice(1, 4).map(Number) : [0, 0, 0];
+}
+
+function versionAtLeast(actual: string | null | undefined, minimum: string) {
+  const left = versionParts(actual);
+  const right = versionParts(minimum);
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] > right[index]) return true;
+    if (left[index] < right[index]) return false;
+  }
+  return true;
+}
+
 async function rest(path: string, init: RequestInit = {}) {
   const { url, key } = config();
   const method = String(init.method || "GET").toUpperCase();
@@ -98,6 +114,20 @@ export async function enqueueCrawlJob(input: {
   categoryId: string;
   maxProducts?: number;
 }) {
+  const agents = await listParserVoAgents(input.shopDomain);
+  const now = Date.now();
+  const activeAgent = agents.find((agent) => {
+    const lastSeen = new Date(agent.last_seen_at).getTime();
+    return Number.isFinite(lastSeen) && now - lastSeen < 45000;
+  });
+
+  if (activeAgent && !versionAtLeast(activeAgent.version, MIN_CHROME_CAPTURE_VERSION)) {
+    throw new Error(
+      `Подключено устаревшее Chrome Capture v${activeAgent.version || "unknown"}. `
+      + `Удалите старое расширение и установите v${MIN_CHROME_CAPTURE_VERSION}. Задание не создано.`,
+    );
+  }
+
   const rows = await rest("parservo_crawl_jobs", {
     method: "POST",
     headers: headers(config().key, "return=representation"),
