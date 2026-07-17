@@ -105,10 +105,12 @@ export async function action({ request }: ActionFunctionArgs) {
     const maxProducts = parseQuantity(form.get("maxProducts"), 5);
     const plnRate = parsePositive(form.get("plnRate"), 12.19);
     const quantity = parseQuantity(form.get("quantity"), 5);
+    const itemsPerLoad = Math.max(1, Math.min(200, parseQuantity(form.get("itemsPerLoad"), 16)));
     const encodedPayload = encodeURIComponent(JSON.stringify({
       url: catalogUrl,
       plnRate,
       quantity,
+      itemsPerLoad,
     }));
 
     const job = await enqueueCrawlJob({
@@ -117,9 +119,13 @@ export async function action({ request }: ActionFunctionArgs) {
       maxProducts,
     });
 
+    const estimatedClicks = maxProducts > 0
+      ? Math.max(0, Math.ceil(maxProducts / itemsPerLoad) - 1)
+      : null;
+
     return json({
       ok: true,
-      message: `Stone Island добавлен в очередь. Лимит: ${maxProducts || "все товары"}.`,
+      message: `Stone Island добавлен в очередь. Лимит: ${maxProducts || "все товары"}. Партия: ${itemsPerLoad}.${estimatedClicks === null ? "" : ` Минимум LOAD MORE: ${estimatedClicks}.`}`,
       jobId: job.id,
     });
   } catch (error) {
@@ -195,10 +201,14 @@ export default function CrawlerPage() {
               <span>Лимит товаров для запуска</span>
               <input name="maxProducts" type="number" min="0" step="1" defaultValue="5" title="0 = все товары" />
             </label>
+            <label>
+              <span>Товаров за одно LOAD MORE</span>
+              <input name="itemsPerLoad" type="number" min="1" max="200" step="1" defaultValue="16" required />
+            </label>
           </div>
 
           <div className="pv-note">
-            Для проверки поставьте лимит 1 или 5. Значение 0 означает полный каталог. После запуска Chrome Capture откроет ссылку, найдёт карточки товаров и передаст их в Shopify.
+            Stone Island обычно добавляет товары партиями. Для 544 товаров и партии 16 расширение выполнит минимум 33 нажатия LOAD MORE. Фактический рост ссылок всё равно проверяется после каждого нажатия.
           </div>
 
           <button className="pv-button pv-button-primary" type="submit" disabled={!data.queueReady || !extensionOnline}>
@@ -244,7 +254,7 @@ export default function CrawlerPage() {
                   <td>{job.products_failed || 0}</td>
                   <td>{job.message || "—"}</td>
                   <td>
-                    {job.status === "QUEUED" ? (
+                    {job.status === "QUEUED" || job.status === "RUNNING" ? (
                       <Form method="post">
                         <input type="hidden" name="intent" value="cancel" />
                         <input type="hidden" name="jobId" value={job.id} />
