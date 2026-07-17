@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ParserVo Stone Island Capture",
-  "version": "2.9.3",
-  "description": "Stone Island capture with correct base catalogue completion, stock audit and emergency stop.",
+  "version": "2.9.4",
+  "description": "Stone Island capture with factual LOAD MORE completion, colour expansion, stock audit and emergency stop.",
   "permissions": ["activeTab", "alarms", "scripting", "storage", "tabs"],
   "host_permissions": [
     "https://*.stoneisland.com/*",
