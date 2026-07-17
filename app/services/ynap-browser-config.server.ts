@@ -15,6 +15,7 @@ type StonePayload = {
   url: string;
   plnRate?: number;
   quantity?: number;
+  itemsPerLoad?: number;
 };
 
 function stoneIslandConfig(categoryId: string) {
@@ -33,6 +34,7 @@ function stoneIslandConfig(categoryId: string) {
 
   const plnRate = Number(payload.plnRate || 12.19);
   const quantity = Math.max(0, Math.trunc(Number(payload.quantity ?? 5)));
+  const itemsPerLoad = Math.max(1, Math.min(200, Math.trunc(Number(payload.itemsPerLoad ?? 16))));
   const gender = /\/women\//i.test(parsed.pathname) ? "WOMEN" : "MEN";
   const category = /\/sales?\//i.test(parsed.pathname) ? "Sale" : "Catalog";
 
@@ -46,6 +48,7 @@ function stoneIslandConfig(categoryId: string) {
     currency: "PLN",
     plnRate: Number.isFinite(plnRate) && plnRate > 0 ? plnRate : 12.19,
     defaultQuantity: quantity,
+    itemsPerLoad,
     brandFacet: "",
     priceFacet: "",
     brands: ["Stone Island"],
