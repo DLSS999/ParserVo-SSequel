@@ -1,9 +1,9 @@
 importScripts("background.js");
 
 const EXTENSION_VERSION = chrome.runtime.getManifest().version;
-let lastCatalogVariantTotal = 0;
+let catalogVariantTotal = 0;
 
-queueRequest = async function queueRequestWithManifestVersion(s, payload, timeoutMs = 60000) {
+queueRequest = async function queueRequestV28(s, payload, timeoutMs = 60000) {
   const { queue } = endpoints(s);
   return jsonRequest(queue, {
     method: "POST",
@@ -18,52 +18,40 @@ queueRequest = async function queueRequestWithManifestVersion(s, payload, timeou
   }, timeoutMs);
 };
 
-function colorVariantUrl(productUrl, colorCode) {
-  try {
-    const url = new URL(productUrl);
-    const value = String(colorCode || "").trim().toUpperCase();
-    if (!/^V[A-Z0-9]+$/.test(value)) return null;
-    if (!/V[A-Z0-9]+\.html?$/i.test(url.pathname)) return null;
-    url.pathname = url.pathname.replace(/V[A-Z0-9]+(\.html?)$/i, `${value}$1`);
-    url.search = "";
-    url.hash = "";
-    return strictStoneProductUrl(url.toString(), productUrl);
-  } catch {
-    return null;
-  }
-}
-
-collectProductLinks = async function collectBaseProductLinks(catalogUrl, limit, loadWaitMs) {
+collectProductLinks = async function collectStoneIslandBaseLinks(catalogUrl, limit, loadWaitMs, itemsPerLoad = 16) {
+  const batchSize = Math.max(1, Math.min(200, Math.trunc(Number(itemsPerLoad || 16))));
+  const requestedTotal = Math.max(0, Math.trunc(Number(limit || 0)));
+  const requiredClicks = () => {
+    const target = requestedTotal || catalogVariantTotal || 0;
+    return target > 0 ? Math.max(0, Math.ceil(target / batchSize) - 1) : 0;
+  };
   let tab = await chrome.tabs.create({ url: catalogUrl, active: true });
-  const allLinks = new Set();
-  let pageTotal = 0;
-  let successfulClicks = 0;
+  const links = new Set();
+  let loadMoreClicks = 0;
   let reloads = 0;
-  let lastSnapshot = null;
 
-  const ensureCatalogTab = async () => {
+  const ensureTab = async () => {
     try {
       await chrome.tabs.get(tab.id);
     } catch {
       tab = await chrome.tabs.create({ url: catalogUrl, active: true });
       reloads += 1;
       await waitForTab(tab.id, 60000);
-      await sleep(Math.max(5000, Number(loadWaitMs || 4500)));
+      await sleep(Math.max(4500, Number(loadWaitMs || 4500)));
     }
   };
 
   const snapshot = async () => {
-    await ensureCatalogTab();
+    await ensureTab();
     const injected = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
-        const cleanText = (value) => String(value || "").replace(/\s+/g, " ").trim();
-        const normalizeProductUrl = (candidate) => {
+        const text = (value) => String(value || "").replace(/\s+/g, " ").trim();
+        const normalize = (value) => {
           try {
-            const url = new URL(String(candidate || ""), location.href);
+            const url = new URL(String(value || ""), location.href);
             if (!/(^|\.)stoneisland\.com$/i.test(url.hostname)) return null;
-            if (!/\/collection\//i.test(url.pathname)) return null;
-            if (!/-L[A-Z0-9]{12,}\.html?$/i.test(url.pathname)) return null;
+            if (!/\/collection\/.+-L[A-Z0-9]{12,}\.html?$/i.test(url.pathname)) return null;
             url.search = "";
             url.hash = "";
             return url.toString();
@@ -72,16 +60,16 @@ collectProductLinks = async function collectBaseProductLinks(catalogUrl, limit, 
           }
         };
 
-        const links = new Set();
-        const add = (candidate) => {
-          const normalized = normalizeProductUrl(candidate);
-          if (normalized) links.add(normalized);
+        const found = new Set();
+        const add = (value) => {
+          const normalized = normalize(value);
+          if (normalized) found.add(normalized);
         };
 
         for (const node of document.querySelectorAll(
-          "a.product-tile__link[href], a[href], [data-url], [data-href], [data-product-url], [data-product-link]",
+          "a.product-tile__link[href], a[href], [data-url], [data-href], [data-product-url]",
         )) {
-          for (const name of ["href", "data-url", "data-href", "data-product-url", "data-product-link"]) {
+          for (const name of ["href", "data-url", "data-href", "data-product-url"]) {
             add(node.getAttribute(name));
           }
         }
@@ -90,86 +78,69 @@ collectProductLinks = async function collectBaseProductLinks(catalogUrl, limit, 
           .replace(/\\u002[fF]/g, "/")
           .replace(/\\\//g, "/")
           .replace(/&amp;/g, "&");
-        const patterns = [
-          /https?:\/\/(?:www\.)?stoneisland\.com\/[^"'<>\s]+?-L[A-Z0-9]{12,}\.html?(?:\?[^"'<>\s]*)?/gi,
-          /["'](\/[a-z]{2}-[a-z]{2}\/collection\/[^"'<>\s]+?-L[A-Z0-9]{12,}\.html?(?:\?[^"'<>\s]*)?)["']/gi,
-        ];
-        for (const pattern of patterns) {
-          for (const match of html.matchAll(pattern)) add(match[1] || match[0]);
-        }
+        const absolute = /https?:\/\/(?:www\.)?stoneisland\.com\/[^"'<>\s]+?-L[A-Z0-9]{12,}\.html?(?:\?[^"'<>\s]*)?/gi;
+        const relative = /["'](\/[a-z]{2}-[a-z]{2}\/collection\/[^"'<>\s]+?-L[A-Z0-9]{12,}\.html?(?:\?[^"'<>\s]*)?)["']/gi;
+        for (const match of html.matchAll(absolute)) add(match[0]);
+        for (const match of html.matchAll(relative)) add(match[1]);
 
-        const bodyText = cleanText(document.body?.innerText || "");
+        const body = text(document.body?.innerText || "");
         const totals = [];
-        for (const match of bodyText.matchAll(/\b([0-9][0-9\s.,]*)\s+(?:products?|results?|items?)\b/gi)) {
-          const value = Number(String(match[1]).replace(/[\s.,]/g, ""));
-          if (Number.isFinite(value) && value > 0 && value < 10000) totals.push(value);
+        for (const match of body.matchAll(/\b([0-9][0-9\s.,]*)\s+(?:products?|results?|items?)\b/gi)) {
+          const number = Number(String(match[1]).replace(/[\s.,]/g, ""));
+          if (Number.isFinite(number) && number > 0 && number < 10000) totals.push(number);
         }
 
         const loadMore = [...document.querySelectorAll(
           "button, a, [role='button'], input[type='button'], input[type='submit']",
-        )].find((node) => {
-          const label = cleanText(
-            node.textContent
-            || node.getAttribute("value")
-            || node.getAttribute("aria-label")
-            || node.getAttribute("title")
-            || "",
-          );
-          return /^load\s+more(?:\s+products?)?$/i.test(label);
-        }) || null;
+        )].find((node) => /^load\s+more(?:\s+products?)?$/i.test(text(
+          node.textContent || node.getAttribute("value") || node.getAttribute("aria-label") || node.getAttribute("title"),
+        ))) || null;
 
         return {
           url: location.href,
           title: document.title || "",
-          bodySnippet: bodyText.slice(0, 500),
-          links: [...links],
-          pageTotal: totals.length ? Math.max(...totals) : 0,
+          links: [...found],
+          total: totals.length ? Math.max(...totals) : 0,
           hasLoadMore: Boolean(loadMore),
-          loadMoreDisabled: Boolean(loadMore?.disabled || loadMore?.getAttribute("aria-disabled") === "true"),
+          disabled: Boolean(loadMore?.disabled || loadMore?.getAttribute("aria-disabled") === "true"),
         };
       },
     });
 
-    const value = injected?.[0]?.result || null;
-    if (!value) throw new Error("Stone Island catalog snapshot returned no data.");
-    lastSnapshot = value;
-    for (const link of value.links || []) {
-      const normalized = strictStoneProductUrl(link, catalogUrl);
-      if (normalized) allLinks.add(normalized);
+    const result = injected?.[0]?.result;
+    if (!result) throw new Error("Stone Island catalog snapshot returned no data.");
+    for (const value of result.links || []) {
+      const normalized = strictStoneProductUrl(value, catalogUrl);
+      if (normalized) links.add(normalized);
     }
-    if (Number(value.pageTotal) > pageTotal) pageTotal = Number(value.pageTotal);
-    lastCatalogVariantTotal = pageTotal;
-    return value;
+    if (Number(result.total) > catalogVariantTotal) catalogVariantTotal = Number(result.total);
+    return result;
   };
 
   const clickLoadMore = async () => {
-    await ensureCatalogTab();
+    await ensureTab();
     const injected = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
-        const cleanText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+        const text = (value) => String(value || "").replace(/\s+/g, " ").trim();
         const button = [...document.querySelectorAll(
           "button, a, [role='button'], input[type='button'], input[type='submit']",
-        )].find((node) => {
-          const label = cleanText(
-            node.textContent
-            || node.getAttribute("value")
-            || node.getAttribute("aria-label")
-            || node.getAttribute("title")
-            || "",
-          );
-          return /^load\s+more(?:\s+products?)?$/i.test(label);
-        });
-        if (!button) return { clicked: false, reason: "missing" };
-        if (button.disabled || button.getAttribute("aria-disabled") === "true") {
-          return { clicked: false, reason: "disabled" };
-        }
+        )].find((node) => /^load\s+more(?:\s+products?)?$/i.test(text(
+          node.textContent || node.getAttribute("value") || node.getAttribute("aria-label") || node.getAttribute("title"),
+        )));
+        if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return false;
         button.scrollIntoView({ block: "center", behavior: "auto" });
+        try {
+          button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+          button.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+          button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
+          button.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        } catch {}
         button.click();
-        return { clicked: true, reason: "clicked" };
+        return true;
       },
     });
-    return injected?.[0]?.result || { clicked: false, reason: "no-result" };
+    return Boolean(injected?.[0]?.result);
   };
 
   try {
@@ -177,59 +148,67 @@ collectProductLinks = async function collectBaseProductLinks(catalogUrl, limit, 
     await sleep(Math.max(3000, Number(loadWaitMs || 4500)));
 
     let initialDeadline = Date.now() + 90000;
-    while (Date.now() < initialDeadline && allLinks.size === 0) {
+    while (Date.now() < initialDeadline && links.size === 0) {
       await snapshot();
-      if (allLinks.size > 0) break;
+      if (links.size > 0) break;
       await sleep(1000);
     }
-
-    if (allLinks.size === 0) {
-      reloads += 1;
+    if (links.size === 0) {
       await chrome.tabs.reload(tab.id);
+      reloads += 1;
       await waitForTab(tab.id, 60000);
       await sleep(Math.max(5000, Number(loadWaitMs || 4500)));
       initialDeadline = Date.now() + 60000;
-      while (Date.now() < initialDeadline && allLinks.size === 0) {
+      while (Date.now() < initialDeadline && links.size === 0) {
         await snapshot();
-        if (allLinks.size > 0) break;
+        if (links.size > 0) break;
         await sleep(1000);
       }
     }
+    if (links.size === 0) throw new Error("No strict Stone Island product links were found on this catalog page.");
 
-    if (allLinks.size === 0) {
-      throw new Error(
-        `Stone Island catalog loaded without product links. URL: ${lastSnapshot?.url || catalogUrl}; `
-        + `title: ${lastSnapshot?.title || "unknown"}; page text: ${lastSnapshot?.bodySnippet || "empty"}`,
-      );
-    }
-
-    let stableRounds = 0;
+    let stable = 0;
     for (let round = 0; round < 700; round += 1) {
-      const requested = Math.max(0, Number(limit || 0));
-      if (requested > 0 && allLinks.size >= requested) break;
+      if (requestedTotal > 0 && links.size >= requestedTotal) break;
+      const before = links.size;
+      const state = await snapshot();
+      setCurrent(`Loading base products ${links.size}; catalog colour variants ${catalogVariantTotal || "?"}`);
 
-      const before = allLinks.size;
-      const currentSnapshot = await snapshot();
-      setCurrent(`Loading base products ${allLinks.size}; catalog variants ${pageTotal || "?"}`);
-
-      if (!currentSnapshot.hasLoadMore || currentSnapshot.loadMoreDisabled) {
-        stableRounds += 1;
+      if (!state.hasLoadMore || state.disabled) {
+        stable += 1;
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: () => window.scrollTo(0, Math.max(0, document.body.scrollHeight - 300)),
         }).catch(() => {});
         await sleep(1500);
         await snapshot();
-        if (allLinks.size > before) stableRounds = 0;
-        if (stableRounds >= 12) break;
+        if (links.size > before) stable = 0;
+        const stableLimit = loadMoreClicks < requiredClicks() ? 40 : 12;
+        if (stable >= stableLimit) {
+          if (loadMoreClicks < requiredClicks()) {
+            throw new Error(
+              `LOAD MORE stopped after ${loadMoreClicks} of ${requiredClicks()} required clicks. `
+              + `Found ${links.size} links; batch size ${batchSize}.`,
+            );
+          }
+          break;
+        }
         continue;
       }
 
-      const clicked = await clickLoadMore();
-      if (!clicked.clicked) {
-        stableRounds += 1;
+      if (!(await clickLoadMore())) {
+        stable += 1;
+        const stableLimit = loadMoreClicks < requiredClicks() ? 40 : 12;
+        if (stable >= stableLimit) {
+          if (loadMoreClicks < requiredClicks()) {
+            throw new Error(
+              `LOAD MORE click failed after ${loadMoreClicks} of ${requiredClicks()} required clicks. `
+              + `Found ${links.size} links; batch size ${batchSize}.`,
+            );
+          }
+          break;
+        }
         await sleep(1200);
-        if (stableRounds >= 12) break;
         continue;
       }
 
@@ -238,29 +217,37 @@ collectProductLinks = async function collectBaseProductLinks(catalogUrl, limit, 
       while (Date.now() < deadline) {
         await sleep(750);
         await snapshot();
-        if (allLinks.size > before) {
+        if (links.size > before) {
           grew = true;
-          successfulClicks += 1;
+          loadMoreClicks += 1;
           break;
         }
       }
-      stableRounds = grew ? 0 : stableRounds + 1;
-      if (stableRounds >= 12) break;
+      stable = grew ? 0 : stable + 1;
+      const stableLimit = loadMoreClicks < requiredClicks() ? 40 : 12;
+      if (stable >= stableLimit) {
+        if (loadMoreClicks < requiredClicks()) {
+          throw new Error(
+            `Catalog stopped growing after ${loadMoreClicks} of ${requiredClicks()} required LOAD MORE clicks. `
+            + `Found ${links.size} links; batch size ${batchSize}.`,
+          );
+        }
+        break;
+      }
     }
 
     log(
-      `Catalog loader ${EXTENSION_VERSION}: found ${allLinks.size} base products for `
-      + `${pageTotal || "?"} catalog colour variants; LOAD MORE clicks ${successfulClicks}; reloads ${reloads}`,
+      `Catalog ${EXTENSION_VERSION}: ${links.size} base products, ${catalogVariantTotal || "?"} colour variants, `
+      + `${loadMoreClicks}/${requiredClicks()} LOAD MORE clicks, batch ${batchSize}, ${reloads} reloads`,
     );
-
-    return [...allLinks].slice(0, Number(limit || 0) > 0 ? Number(limit) : undefined);
+    return [...links].slice(0, Number(limit || 0) > 0 ? Number(limit) : undefined);
   } finally {
     try { await chrome.tabs.remove(tab.id); } catch {}
   }
 };
 
 const legacyReadStoneProduct = readStoneProduct;
-readStoneProduct = async function readStoneProductWithColourVariants(tabId) {
+readStoneProduct = async function readStoneProductV28(tabId) {
   const page = await legacyReadStoneProduct(tabId);
   const injected = await chrome.scripting.executeScript({
     target: { tabId },
@@ -270,11 +257,12 @@ readStoneProduct = async function readStoneProductWithColourVariants(tabId) {
       while (Date.now() < deadline && document.querySelectorAll('#pdp-colorSelector input[type="radio"][value]').length === 0) {
         await wait(250);
       }
-
       const current = new URL(location.href);
       const variants = [];
       const seen = new Set();
-      for (const input of document.querySelectorAll('#pdp-colorSelector input[type="radio"][value], .product-selection__selectors input[type="radio"][value]')) {
+      for (const input of document.querySelectorAll(
+        '#pdp-colorSelector input[type="radio"][value], .product-selection__selectors input[type="radio"][value]',
+      )) {
         const code = String(input.value || "").trim().toUpperCase();
         if (!/^V[A-Z0-9]+$/.test(code)) continue;
         const url = new URL(current.toString());
@@ -282,34 +270,23 @@ readStoneProduct = async function readStoneProductWithColourVariants(tabId) {
         url.pathname = url.pathname.replace(/V[A-Z0-9]+(\.html?)$/i, `${code}$1`);
         url.search = "";
         url.hash = "";
-        const href = url.toString();
-        if (seen.has(href)) continue;
-        seen.add(href);
-        variants.push({
-          url: href,
-          code,
-          color: String(input.getAttribute("aria-label") || "").trim(),
-        });
+        if (seen.has(url.href)) continue;
+        seen.add(url.href);
+        variants.push({ url: url.href, code, color: String(input.getAttribute("aria-label") || "").trim() });
       }
       return variants;
     },
   });
-
-  const variants = Array.isArray(injected?.[0]?.result) ? injected[0].result : [];
-  page.colorVariantUrls = variants
-    .map((variant) => ({
-      ...variant,
-      url: strictStoneProductUrl(variant.url, page.url),
-    }))
-    .filter((variant) => variant.url);
-
-  if (!page.colorVariantUrls.some((variant) => variant.url === page.url)) {
-    page.colorVariantUrls.unshift({ url: page.url, code: page.productCode.match(/V[A-Z0-9]+$/i)?.[0] || "", color: page.color });
+  page.colorVariantUrls = (Array.isArray(injected?.[0]?.result) ? injected[0].result : [])
+    .map((item) => ({ ...item, url: strictStoneProductUrl(item.url, page.url) }))
+    .filter((item) => item.url);
+  if (!page.colorVariantUrls.some((item) => item.url === page.url)) {
+    page.colorVariantUrls.unshift({ url: page.url, color: page.color, code: page.productCode.match(/V[A-Z0-9]+$/i)?.[0] || "" });
   }
   return page;
 };
 
-captureProduct = async function captureProductWithColourDiscovery(url, s, context) {
+captureProduct = async function captureProductV28(url, s, context) {
   const tab = await chrome.tabs.create({ url, active: true });
   try {
     await waitForTab(tab.id, 60000);
@@ -332,7 +309,6 @@ captureProduct = async function captureProductWithColourDiscovery(url, s, contex
         rates: { pln: context.plnRate || s.plnRate, eur: context.eurRate || s.eurRate },
       },
     };
-
     try {
       const apiResult = await jsonRequest(capture, {
         method: "POST",
@@ -348,7 +324,7 @@ captureProduct = async function captureProductWithColourDiscovery(url, s, contex
   }
 };
 
-processJob = async function processJobWithColourExpansion(s, job) {
+processJob = async function processJobV28(s, job) {
   const configs = Array.isArray(job.configs) ? job.configs : [];
   const limit = Math.max(0, Number(job.max_products || 0));
   const queue = [];
@@ -367,8 +343,13 @@ processJob = async function processJobWithColourExpansion(s, job) {
   for (const config of configs) {
     for (const pageUrl of Array.isArray(config.pageUrls) ? config.pageUrls : []) {
       if (stopRequested || !(await jobActive(s, job.id))) return;
-      const links = await collectProductLinks(pageUrl, limit, Number(s.loadWaitMs || 4500));
-      for (const link of links) addWork(link, config);
+      const baseLinks = await collectProductLinks(
+        pageUrl,
+        limit,
+        Number(s.loadWaitMs || 4500),
+        Number(config.itemsPerLoad || 16),
+      );
+      for (const link of baseLinks) addWork(link, config);
       pagesDone += 1;
       await queueRequest(s, {
         action: "progress",
@@ -376,22 +357,21 @@ processJob = async function processJobWithColourExpansion(s, job) {
         pagesTotal: configs.length,
         pagesDone,
         linksFound: queue.length,
-        productsTotal: limit || lastCatalogVariantTotal || queue.length,
+        productsTotal: limit || catalogVariantTotal || queue.length,
         productsDone: stats.captured,
         productsFailed: stats.failed,
-        message: `Found ${queue.length} base products; expanding ${lastCatalogVariantTotal || limit || "?"} colour variants`,
+        message: `Found ${queue.length} base products; expanding colour variants`,
       });
     }
   }
 
   if (!queue.length) throw new Error("No strict Stone Island product links were found on this catalog page.");
+  stats.total = limit || catalogVariantTotal || queue.length;
 
-  stats.total = limit || lastCatalogVariantTotal || queue.length;
   let cursor = 0;
   while (cursor < queue.length && (limit <= 0 || cursor < limit)) {
     if (stopRequested || !(await jobActive(s, job.id))) return;
-    const row = queue[cursor];
-    cursor += 1;
+    const row = queue[cursor++];
     setCurrent(`Importing ${cursor}/${limit || queue.length}; discovered ${queue.length}`);
 
     try {
@@ -404,14 +384,10 @@ processJob = async function processJobWithColourExpansion(s, job) {
         eurRate: row.config.eurRate,
         defaultQuantity: row.config.defaultQuantity,
       });
-
-      for (const variant of result.page?.colorVariantUrls || []) {
-        addWork(variant.url, row.config);
-      }
-
+      for (const variant of result.page?.colorVariantUrls || []) addWork(variant.url, row.config);
       if (result.ok) {
         stats.captured += 1;
-        log(`Imported ${row.url}; discovered ${result.page?.colorVariantUrls?.length || 1} colours`);
+        log(`Imported ${row.url}; ${result.page?.colorVariantUrls?.length || 1} colour variants found`);
       } else {
         stats.failed += 1;
         log(`${row.url}\n${result.error}`, true);
@@ -421,7 +397,7 @@ processJob = async function processJobWithColourExpansion(s, job) {
       log(`${row.url}\n${messageOf(error)}`, true);
     } finally {
       stats.processed += 1;
-      stats.total = limit || Math.max(queue.length, lastCatalogVariantTotal || 0);
+      stats.total = limit || Math.max(queue.length, catalogVariantTotal || 0);
       await queueRequest(s, {
         action: "progress",
         jobId: job.id,
@@ -431,18 +407,15 @@ processJob = async function processJobWithColourExpansion(s, job) {
         productsTotal: stats.total,
         productsDone: stats.captured,
         productsFailed: stats.failed,
-        message: `Discovered ${queue.length}/${limit || lastCatalogVariantTotal || queue.length}; imported ${stats.captured}; errors ${stats.failed}`,
+        message: `Discovered ${queue.length}/${limit || catalogVariantTotal || queue.length}; imported ${stats.captured}; errors ${stats.failed}`,
         result: { errors: logs.filter((line) => line.includes("ERROR")).slice(0, 20) },
       }).catch(() => {});
     }
   }
 
-  const expected = limit || lastCatalogVariantTotal || queue.length;
+  const expected = limit || catalogVariantTotal || queue.length;
   if (expected > 0 && queue.length < expected) {
-    throw new Error(
-      `Stone Island colour expansion is incomplete: discovered ${queue.length} of ${expected} variants `
-      + `from the loaded base products.`,
-    );
+    throw new Error(`Stone Island colour expansion is incomplete: discovered ${queue.length} of ${expected} variants.`);
   }
 
   if (!stopRequested) {
@@ -455,8 +428,8 @@ processJob = async function processJobWithColourExpansion(s, job) {
       productsTotal: expected,
       productsDone: stats.captured,
       productsFailed: stats.failed,
-      message: `Completed ${stats.captured}/${expected}; errors ${stats.failed}; colour variants discovered ${queue.length}`,
-      result: { version: EXTENSION_VERSION, catalogVariantTotal: lastCatalogVariantTotal },
+      message: `Completed ${stats.captured}/${expected}; errors ${stats.failed}; colour variants ${queue.length}`,
+      result: { version: EXTENSION_VERSION, catalogVariantTotal },
     });
   }
 };
