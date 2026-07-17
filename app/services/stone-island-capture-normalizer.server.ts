@@ -17,6 +17,7 @@ import type {
 
 const STONE_HOST = /(^|\.)stoneisland\.com$/i;
 const STONE_MEDIA_HOST = /(^|\.)thron\.com$/i;
+const DEFAULT_VARIANT_TITLE = "Default Title";
 const GENERIC_CODE_WORDS = new Set([
   "COMPLIMENTARY",
   "STANDARD",
@@ -175,7 +176,7 @@ function normalizeSize(value: unknown) {
     [/^(XLARGE|XL)$/i, "XL"],
     [/^(XXLARGE|2XL|XXL)$/i, "XXL"],
     [/^(XXXLARGE|3XL|XXXL)$/i, "XXXL"],
-    [/^(ONESIZE|OS)$/i, "ONE SIZE"],
+    [/^(ONESIZE|OS|UN)$/i, DEFAULT_VARIANT_TITLE],
   ];
   for (const [pattern, result] of aliases) if (pattern.test(clean)) return result;
   if (/^(IT|EU|FR|UK|US)\d{1,3}(?:\.5)?$/.test(clean)) return clean;
@@ -198,11 +199,31 @@ function sizeQuantity(size: CapturedSize, fallback: number) {
   return fallback;
 }
 
+function variantRow(
+  size: string,
+  quantity: number,
+  productCode: string,
+  pricing: ReturnType<typeof calculatePricing>,
+  position: number,
+): ParsedMarketplaceVariant {
+  const defaultVariant = size.toUpperCase() === DEFAULT_VARIANT_TITLE.toUpperCase();
+  return {
+    size,
+    quantity,
+    available: quantity > 0,
+    position,
+    sku: defaultVariant ? productCode : `${productCode}-${size.replace(/\s+/g, "-")}`,
+    costPriceUah: pricing.costPriceUah,
+    salePriceUah: pricing.salePriceUah,
+    compareAtPriceUah: pricing.compareAtPriceUah,
+  };
+}
+
 function buildVariants(
   capture: YnapBrowserCapture,
   productCode: string,
   pricing: ReturnType<typeof calculatePricing>,
-  allowOneSize: boolean,
+  allowNoSizeOption: boolean,
 ) {
   const fallbackQuantity = configuredQuantity(capture);
   const bySize = new Map<string, ParsedMarketplaceVariant>();
@@ -212,30 +233,24 @@ function buildVariants(
     if (!size) continue;
     const quantity = sizeQuantity(row, fallbackQuantity);
     if (quantity <= 0) continue;
-    bySize.set(size, {
-      size,
-      quantity,
-      available: true,
-      position: bySize.size + 1,
-      sku: `${productCode}-${size.replace(/\s+/g, "-")}`,
-      costPriceUah: pricing.costPriceUah,
-      salePriceUah: pricing.salePriceUah,
-      compareAtPriceUah: pricing.compareAtPriceUah,
-    });
+
+    if (size.toUpperCase() === DEFAULT_VARIANT_TITLE.toUpperCase()) {
+      bySize.clear();
+      bySize.set(DEFAULT_VARIANT_TITLE, variantRow(DEFAULT_VARIANT_TITLE, quantity, productCode, pricing, 1));
+      break;
+    }
+
+    bySize.set(size, variantRow(size, quantity, productCode, pricing, bySize.size + 1));
   }
 
-  if (!bySize.size && allowOneSize && capture.productAvailable !== false && fallbackQuantity > 0) {
-    bySize.set("ONE SIZE", {
-      size: "ONE SIZE",
-      quantity: fallbackQuantity,
-      available: true,
-      position: 1,
-      sku: `${productCode}-OS`,
-      costPriceUah: pricing.costPriceUah,
-      salePriceUah: pricing.salePriceUah,
-      compareAtPriceUah: pricing.compareAtPriceUah,
-    });
+  if (!bySize.size && allowNoSizeOption && capture.productAvailable !== false && fallbackQuantity > 0) {
+    bySize.set(
+      DEFAULT_VARIANT_TITLE,
+      variantRow(DEFAULT_VARIANT_TITLE, fallbackQuantity, productCode, pricing, 1),
+    );
   }
+
+  if (bySize.has(DEFAULT_VARIANT_TITLE)) return [bySize.get(DEFAULT_VARIANT_TITLE)!];
 
   const sorted = sortSizesForShopify([...bySize.keys()]);
   return sorted.map((size, index) => ({ ...bySize.get(size)!, position: index + 1 }));
@@ -363,15 +378,17 @@ export function normalizeStoneIslandCapture(capture: YnapBrowserCapture): Normal
   };
 
   const mapping = getProductMapping(provisional);
-  const oneSizeKinds = new Set([
+  const noSizeOptionKinds = new Set([
     "backpack", "shopper", "shoulder_bag", "bag", "belt", "scarf", "cap", "hat", "wallet", "sunglasses",
   ]);
-  const variants = buildVariants(capture, productCode, pricing, oneSizeKinds.has(mapping.kind));
+  const variants = buildVariants(capture, productCode, pricing, noSizeOptionKinds.has(mapping.kind));
   if (!variants.length) {
     throw new Error("Stone Island sizes were not captured or all sizes are sold out. Reload Chrome Capture and run the import again.");
   }
 
-  provisional.sizes = variants.map((variant) => variant.size);
+  const defaultVariant = variants.length === 1
+    && variants[0].size.toUpperCase() === DEFAULT_VARIANT_TITLE.toUpperCase();
+  provisional.sizes = defaultVariant ? [] : variants.map((variant) => variant.size);
   provisional.variants = variants;
   provisional.media = normalizeMedia(capture.media || [], productCode, title);
   provisional.productType = mapping.productType;
