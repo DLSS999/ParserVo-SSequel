@@ -47,6 +47,11 @@ export type ParsedMarketplaceProduct = {
   descriptionHtml?: string | null;
   composition?: string | null;
   media: SourceMediaItem[];
+  shopifyProductGid?: string | null;
+  importStatus?: string | null;
+  lastError?: string | null;
+  lastSeenAt?: string | null;
+  updatedAt?: string | null;
 };
 
 export function splitMedia(media: SourceMediaItem[]) {
