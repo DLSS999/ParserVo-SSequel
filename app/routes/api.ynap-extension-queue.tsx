@@ -8,6 +8,8 @@ import {
 } from "../services/browser-capture.server";
 import { configsForJob } from "../services/ynap-browser-config.server";
 
+const STOCK_REFRESH_PREFIX = "stone-island-stock-refresh:";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
@@ -37,6 +39,58 @@ function progressPatch(payload: Record<string, unknown>) {
   };
 }
 
+function stockRefreshPayload(categoryId: string) {
+  if (!categoryId.startsWith(STOCK_REFRESH_PREFIX)) return null;
+  try {
+    const payload = JSON.parse(decodeURIComponent(categoryId.slice(STOCK_REFRESH_PREFIX.length))) as {
+      plnRate?: number;
+      quantity?: number;
+    };
+    return {
+      plnRate: Number(payload.plnRate || 12.19),
+      quantity: Math.max(0, Math.trunc(Number(payload.quantity ?? 5))),
+    };
+  } catch {
+    return { plnRate: 12.19, quantity: 5 };
+  }
+}
+
+async function configsForClaim(categoryId: string) {
+  const stock = stockRefreshPayload(categoryId);
+  if (!stock) return configsForJob(categoryId);
+
+  const rows = await databaseAdminRequest(
+    "parservo_products?source=eq.STONE_ISLAND&shopify_product_gid=not.is.null&source_url=not.is.null&select=source_url,gender,product_type&order=updated_at.asc&limit=1000",
+  ) as Array<{ source_url?: string | null; gender?: string | null; product_type?: string | null }>;
+  const directProductUrls = Array.from(new Set(
+    (Array.isArray(rows) ? rows : [])
+      .map((row) => String(row.source_url || "").trim())
+      .filter((url) => /^https:\/\/(?:www\.)?stoneisland\.com\//i.test(url)),
+  ));
+
+  if (!directProductUrls.length) return [];
+  return [{
+    id: categoryId,
+    source: "STONE_ISLAND",
+    gender: "MEN",
+    category: "Inventory refresh",
+    mode: "STOCK_ONLY",
+    baseUrl: "https://www.stoneisland.com/",
+    catalogUrl: "",
+    currency: "PLN",
+    plnRate: Number.isFinite(stock.plnRate) && stock.plnRate > 0 ? stock.plnRate : 12.19,
+    defaultQuantity: stock.quantity,
+    itemsPerLoad: 0,
+    brandFacet: "",
+    priceFacet: "",
+    brands: ["Stone Island"],
+    pages: 1,
+    expected: directProductUrls.length,
+    pageUrls: [],
+    directProductUrls,
+  }];
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   if (request.method.toUpperCase() === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -44,7 +98,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return reply({
     ok: true,
     name: "ParserVo Stone Island Chrome queue API",
-    version: "2.9.2",
+    version: "2.9.6",
     actions: [
       "heartbeat",
       "test",
@@ -101,22 +155,28 @@ export async function action({ request }: ActionFunctionArgs) {
       const job = await claimBrowserCrawlJob(shop, agentId);
       if (!job) return reply({ ok: true, job: null });
 
-      const configs = configsForJob(String(job.category_id || "all"));
+      const configs = await configsForClaim(String(job.category_id || "all"));
       if (!configs.length) {
         await updateBrowserCrawlJob(job.id, {
           status: "ERROR",
           finished_at: new Date().toISOString(),
-          message: `Unknown category: ${job.category_id}`,
+          message: String(job.category_id || "").startsWith(STOCK_REFRESH_PREFIX)
+            ? "Нет импортированных Stone Island товаров для обновления наличия."
+            : `Unknown category: ${job.category_id}`,
         });
-        return reply({ ok: false, error: "Unknown category." }, 400);
+        return reply({ ok: false, error: "No products or unknown category." }, 400);
       }
 
       const pagesTotal = configs.reduce((sum, config) => sum + Number(config.pages || 0), 0);
+      const directTotal = configs.reduce((sum, config: any) => sum + Number(config.directProductUrls?.length || 0), 0);
       await updateBrowserCrawlJob(job.id, {
         status: "RUNNING",
         phase: "LEGACY",
         pages_total: pagesTotal,
-        message: "Chrome Capture started catalog processing",
+        products_total: directTotal || Number(job.max_products || 0),
+        message: directTotal
+          ? `Chrome Capture started inventory refresh for ${directTotal} products`
+          : "Chrome Capture started catalog processing",
       });
       await recordBrowserHeartbeat({
         shopDomain: shop,
@@ -132,7 +192,7 @@ export async function action({ request }: ActionFunctionArgs) {
         job: {
           ...job,
           phase: "LEGACY",
-          max_products: Number(job.max_products || 0),
+          max_products: directTotal || Number(job.max_products || 0),
           configs,
         },
       });
