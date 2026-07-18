@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ParserVo Stone Island Capture",
-  "version": "2.9.8",
-  "description": "Stone Island capture with resumable import progress, reliable size parsing, transport retries, colour expansion and bulk inventory refresh.",
+  "version": "2.9.9",
+  "description": "Stone Island capture with separate out-of-stock counting, resumable progress, reliable size parsing, transport retries, colour expansion and bulk inventory refresh.",
   "permissions": ["activeTab", "alarms", "scripting", "storage", "tabs"],
   "host_permissions": [
     "https://*.stoneisland.com/*",
@@ -12,7 +12,7 @@
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
-  "background": { "service_worker": "background-entry-298.js" },
+  "background": { "service_worker": "background-entry-299.js" },
   "action": {
     "default_title": "ParserVo Stone Island Capture",
     "default_popup": "popup.html"
