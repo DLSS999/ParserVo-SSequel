@@ -8,9 +8,11 @@ import {
 import { markCrawlLinkSuccess } from "../services/crawl-link-queue.server";
 import {
   normalizeYnapCapture,
+  type NormalizedYnapCapture,
   type YnapBrowserCapture,
 } from "../services/ynap-capture-normalizer.server";
 import {
+  extractStoneIslandProductCode,
   isStoneIslandCapture,
   normalizeStoneIslandCapture,
   parseLocalizedNumber,
@@ -18,6 +20,7 @@ import {
 import { storeYnapCapture } from "../services/ynap-catalog-store.server";
 import { createStoredAdminClient } from "../services/shopify-stored-admin.server";
 import { syncProductToShopifyStrict } from "../services/shopify-sync-fixed.server";
+import { syncStoneIslandInventoryOnly } from "../services/shopify-inventory-refresh.server";
 import { skuForVariant } from "../services/sku-policy.server";
 
 const corsHeaders = {
@@ -31,10 +34,73 @@ function response(data: unknown, status = 200) {
   return json(data, { status, headers: corsHeaders });
 }
 
+function slug(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 220);
+}
+
+function productSlugFromUrl(urlValue: string, productCode: string) {
+  try {
+    return decodeURIComponent(new URL(urlValue).pathname.split("/").filter(Boolean).pop() || "")
+      .replace(/\.html?$/i, "")
+      .replace(new RegExp(`-${productCode}$`, "i"), "") || productCode;
+  } catch {
+    return productCode;
+  }
+}
+
 function normalizeCapture(capture: YnapBrowserCapture) {
   return isStoneIslandCapture(capture)
     ? normalizeStoneIslandCapture(capture)
     : normalizeYnapCapture(capture);
+}
+
+function normalizeStockCapture(capture: YnapBrowserCapture): NormalizedYnapCapture {
+  try {
+    return normalizeStoneIslandCapture(capture);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/sizes were not captured|all sizes are sold out|нет размеров/i.test(message)) throw error;
+
+    const productCode = extractStoneIslandProductCode(capture);
+    const handle = slug(`${productSlugFromUrl(capture.url, productCode)}-${productCode}`);
+    return {
+      categoryId: capture.categoryId,
+      productCode,
+      sourcePayload: capture,
+      product: {
+        handle,
+        source: "STONE_ISLAND",
+        gender: capture.gender === "WOMEN" ? "WOMEN" : "MEN",
+        category: String(capture.category || "Catalog"),
+        brand: "Stone Island",
+        title: String(capture.title || productCode).trim(),
+        sourceUrl: capture.url,
+        supplierProductId: productCode,
+        price: parseLocalizedNumber(capture.price),
+        compareAtPrice: parseLocalizedNumber(capture.compareAtPrice) || null,
+        currency: String(capture.currency || "PLN"),
+        color: String(capture.color || "").trim() || null,
+        sizes: [],
+        variants: [],
+        pricing: {
+          costPriceUah: 0,
+          salePriceUah: 0,
+          compareAtPriceUah: null,
+        },
+        tags: ["Stone Island", capture.gender === "WOMEN" ? "Women" : "Men"],
+        description: null,
+        descriptionHtml: null,
+        composition: null,
+        media: [],
+      },
+    };
+  }
 }
 
 async function saveImportState(handle: string, patch: Record<string, unknown>) {
@@ -58,7 +124,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return response({
     ok: true,
     name: "ParserVo NET-A-PORTER / MR PORTER / Stone Island capture API",
-    version: "stone-island-2.4.0",
+    version: "stone-island-2.9.6",
   });
 }
 
@@ -74,7 +140,7 @@ export async function action({ request }: ActionFunctionArgs) {
       agentId?: string;
       version?: string;
       linkId?: string;
-      capture?: YnapBrowserCapture;
+      capture?: YnapBrowserCapture & { mode?: string };
     };
 
     const shop = String(payload.shop || "").trim().toLowerCase();
@@ -89,7 +155,11 @@ export async function action({ request }: ActionFunctionArgs) {
       return response({ ok: false, error: "Missing product capture payload." }, 400);
     }
 
-    const normalized = normalizeCapture(payload.capture);
+    const stockOnly = String(payload.capture.mode || "").toUpperCase() === "STOCK_ONLY";
+    const normalized = stockOnly
+      ? normalizeStockCapture(payload.capture)
+      : normalizeCapture(payload.capture);
+
     if (normalized.product.source === "STONE_ISLAND") {
       normalized.product.variants = normalized.product.variants.map((variant) => ({
         ...variant,
@@ -97,49 +167,65 @@ export async function action({ request }: ActionFunctionArgs) {
       }));
     }
 
-    const stored = await storeYnapCapture(normalized);
+    let stored: { handle: string; availableVariants: number; images: number; videos: number };
     let shopify: any = null;
     let shopifyError: string | null = null;
 
     try {
       const admin = await createStoredAdminClient(shop);
-      const captureWithSettings = payload.capture as YnapBrowserCapture & {
-        defaultQuantity?: number | string;
-        quantity?: number | string;
-      };
-      const defaultQuantity = Math.max(
-        0,
-        Math.trunc(parseLocalizedNumber(captureWithSettings.defaultQuantity ?? captureWithSettings.quantity ?? 5)),
-      );
-      shopify = await syncProductToShopifyStrict(admin, normalized.product, {
-        eurRate: parseLocalizedNumber(payload.capture.rates?.eur) || 55,
-        plnRate: parseLocalizedNumber(payload.capture.rates?.pln) || 12.19,
-        defaultQuantity,
-      });
+      if (stockOnly) {
+        shopify = await syncStoneIslandInventoryOnly(admin, normalized.product);
+        stored = {
+          handle: String(normalized.product.handle || ""),
+          availableVariants: Number(shopify?.inStockVariants || 0),
+          images: 0,
+          videos: 0,
+        };
+      } else {
+        stored = await storeYnapCapture(normalized);
+        const captureWithSettings = payload.capture as YnapBrowserCapture & {
+          defaultQuantity?: number | string;
+          quantity?: number | string;
+        };
+        const defaultQuantity = Math.max(
+          0,
+          Math.trunc(parseLocalizedNumber(captureWithSettings.defaultQuantity ?? captureWithSettings.quantity ?? 5)),
+        );
+        shopify = await syncProductToShopifyStrict(admin, normalized.product, {
+          eurRate: parseLocalizedNumber(payload.capture.rates?.eur) || 55,
+          plnRate: parseLocalizedNumber(payload.capture.rates?.pln) || 12.19,
+          defaultQuantity,
+        });
+      }
+
       const warnings = Array.isArray(shopify?.metafieldErrors)
         ? shopify.metafieldErrors.filter(Boolean)
         : [];
-      if (warnings.length) {
-        console.warn("ParserVo Shopify field warnings", {
-          handle: stored.handle,
-          warnings,
-        });
-      }
       await saveImportState(stored.handle, {
-        shopify_product_gid: shopify?.productId || null,
-        import_status: "IMPORTED",
+        ...(shopify?.productId ? { shopify_product_gid: shopify.productId } : {}),
+        import_status: shopify?.totalQuantity === 0 ? "OUT_OF_STOCK" : "IMPORTED",
+        last_seen_at: new Date().toISOString(),
         last_error: warnings.length ? `Warnings: ${warnings.join(" | ")}`.slice(0, 4000) : null,
       });
     } catch (error) {
+      stored = {
+        handle: String(normalized.product.handle || ""),
+        availableVariants: 0,
+        images: 0,
+        videos: 0,
+      };
       shopifyError = error instanceof Error ? error.message : String(error);
       console.error("ParserVo Shopify sync failed", {
         handle: stored.handle,
+        stockOnly,
         message: shopifyError,
       });
-      await saveImportState(stored.handle, {
-        import_status: "ERROR",
-        last_error: shopifyError.slice(0, 4000),
-      });
+      if (stored.handle) {
+        await saveImportState(stored.handle, {
+          import_status: "ERROR",
+          last_error: shopifyError.slice(0, 4000),
+        }).catch(() => {});
+      }
     }
 
     if (payload.linkId && !shopifyError) {
@@ -156,7 +242,9 @@ export async function action({ request }: ActionFunctionArgs) {
       status: "BUSY",
       message: shopifyError
         ? `Shopify error: ${shopifyError.slice(0, 300)}`
-        : `Uploaded ${normalized.product.brand} ${normalized.product.title}`,
+        : stockOnly
+          ? `Inventory updated ${normalized.product.title}`
+          : `Uploaded ${normalized.product.brand} ${normalized.product.title}`,
       currentJobId: payload.capture.jobId || null,
     });
 
@@ -174,6 +262,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
     return response({
       ok: true,
+      mode: stockOnly ? "STOCK_ONLY" : "FULL_IMPORT",
       product: {
         handle: stored.handle,
         brand: normalized.product.brand,
