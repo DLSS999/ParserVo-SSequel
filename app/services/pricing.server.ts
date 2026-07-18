@@ -10,11 +10,35 @@ export type PricingInput = {
 
 export function toDecimalNumber(value: unknown, fallback = 0) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  const raw = String(value ?? "")
-    .trim()
+
+  const source = String(value ?? "")
+    .replace(/\u00a0/g, " ")
+    .trim();
+  const match = source.match(/-?[0-9][0-9\s.,]*/);
+  if (!match) return fallback;
+
+  let raw = match[0]
     .replace(/\s+/g, "")
-    .replace(/,/g, ".")
-    .replace(/[^\d.-]/g, "");
+    .replace(/[.,]+$/g, "");
+  if (!raw || raw === "-") return fallback;
+
+  const comma = raw.lastIndexOf(",");
+  const dot = raw.lastIndexOf(".");
+
+  if (comma >= 0 && dot >= 0) {
+    const decimal = comma > dot ? "," : ".";
+    const thousands = decimal === "," ? /\./g : /,/g;
+    raw = raw.replace(thousands, "").replace(decimal, ".");
+  } else if (comma >= 0) {
+    const decimals = raw.length - comma - 1;
+    raw = decimals === 2
+      ? raw.replace(/\./g, "").replace(",", ".")
+      : raw.replace(/,/g, "");
+  } else if (dot >= 0) {
+    const decimals = raw.length - dot - 1;
+    if (decimals !== 2) raw = raw.replace(/\./g, "");
+  }
+
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
@@ -65,6 +89,27 @@ function calculateRetailPrice(costPriceUah: number, roundingRule: string) {
   };
 }
 
+function normalizeSupplierOldPrice(value: unknown, supplierPrice: number) {
+  let oldPrice = Math.max(0, toDecimalNumber(value, 0));
+  if (!oldPrice || !supplierPrice || oldPrice <= supplierPrice) return oldPrice;
+
+  // A trailing separator from strings such as "985,00 ," previously produced
+  // 98,500. Recover the intended old price only when the corrected value is a
+  // plausible compare-at price. Otherwise reject the anomalous value entirely.
+  if (oldPrice / supplierPrice > 8) {
+    for (const divisor of [100, 1_000, 10]) {
+      const candidate = oldPrice / divisor;
+      const ratio = candidate / supplierPrice;
+      if (candidate > supplierPrice && ratio > 1 && ratio <= 8) {
+        oldPrice = candidate;
+        break;
+      }
+    }
+  }
+
+  return oldPrice / supplierPrice <= 8 ? oldPrice : 0;
+}
+
 export function calculatePricing(input: PricingInput) {
   const supplierPrice = Math.max(0, toDecimalNumber(input.supplierPrice, 0));
   const exchangeRateUsed = getCurrencyRate(input.currency, input.eurRate, input.plnRate);
@@ -73,7 +118,7 @@ export function calculatePricing(input: PricingInput) {
   const currentPricing = calculateRetailPrice(costPriceUah, roundingRule);
   const salePriceUah = currentPricing.retailPriceUah;
 
-  const supplierOldPrice = Math.max(0, toDecimalNumber(input.supplierOldPrice, 0));
+  const supplierOldPrice = normalizeSupplierOldPrice(input.supplierOldPrice, supplierPrice);
   const oldCostPriceUah = supplierOldPrice > supplierPrice
     ? roundPrice(supplierOldPrice * exchangeRateUsed, roundingRule)
     : null;
