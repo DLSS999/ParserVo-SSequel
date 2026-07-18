@@ -6,6 +6,7 @@ import {
   verifyBrowserCaptureKey,
 } from "../services/browser-capture.server";
 import { markCrawlLinkSuccess } from "../services/crawl-link-queue.server";
+import { resolveStandardColor } from "../services/color-mappings.server";
 import {
   normalizeYnapCapture,
   type NormalizedYnapCapture,
@@ -103,6 +104,38 @@ function normalizeStockCapture(capture: YnapBrowserCapture): NormalizedYnapCaptu
   }
 }
 
+function uniqueTags(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const clean = String(value || "").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(clean);
+  }
+  return result;
+}
+
+async function productForShopify(normalized: NormalizedYnapCapture) {
+  const product = normalized.product;
+  if (product.source !== "STONE_ISLAND") return product;
+
+  const originalColor = String(product.color || "").trim();
+  const standardColor = await resolveStandardColor(originalColor);
+  if (!standardColor) return product;
+
+  return {
+    ...product,
+    color: standardColor,
+    tags: uniqueTags([
+      ...(product.tags || []),
+      originalColor && originalColor.toLowerCase() !== standardColor.toLowerCase() ? originalColor : null,
+    ]),
+  };
+}
+
 async function saveImportState(handle: string, patch: Record<string, unknown>) {
   await databaseAdminRequest(
     `parservo_products?handle=eq.${encodeURIComponent(handle)}`,
@@ -124,7 +157,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return response({
     ok: true,
     name: "ParserVo NET-A-PORTER / MR PORTER / Stone Island capture API",
-    version: "stone-island-2.9.6",
+    version: "stone-island-2.9.9-colors",
   });
 }
 
@@ -191,7 +224,8 @@ export async function action({ request }: ActionFunctionArgs) {
           0,
           Math.trunc(parseLocalizedNumber(captureWithSettings.defaultQuantity ?? captureWithSettings.quantity ?? 5)),
         );
-        shopify = await syncProductToShopifyStrict(admin, normalized.product, {
+        const mappedProduct = await productForShopify(normalized);
+        shopify = await syncProductToShopifyStrict(admin, mappedProduct, {
           eurRate: parseLocalizedNumber(payload.capture.rates?.eur) || 55,
           plnRate: parseLocalizedNumber(payload.capture.rates?.pln) || 12.19,
           defaultQuantity,
@@ -268,6 +302,7 @@ export async function action({ request }: ActionFunctionArgs) {
         brand: normalized.product.brand,
         title: normalized.product.title,
         color: normalized.product.color,
+        standardColor: shopify?.standardColor || null,
         sizes: normalized.product.sizes,
         price: normalized.product.price,
         compareAtPrice: normalized.product.compareAtPrice,
