@@ -156,8 +156,9 @@ readStoneProduct = async function readStoneProductWithStrictStockAudit(tabId) {
   });
 
   const audit = injected?.[0]?.result || { hasSizeSelector: false, sizes: [], productSoldOut: false };
-  if (audit.hasSizeSelector) {
-    page.sizes = Array.isArray(audit.sizes) ? audit.sizes : [];
+  const auditedSizes = Array.isArray(audit.sizes) ? audit.sizes : [];
+  if (audit.hasSizeSelector && auditedSizes.length) {
+    page.sizes = auditedSizes;
   }
   if (audit.productSoldOut) page.productAvailable = false;
 
