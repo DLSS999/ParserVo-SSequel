@@ -4,9 +4,10 @@ const DEFAULT_SUPABASE_URL = "https://cuzjuykyelzrvxxbcjry.supabase.co";
 
 type ProductRow = {
   handle: string;
-  source: "NET_A_PORTER" | "MR_PORTER";
+  source: "NET_A_PORTER" | "MR_PORTER" | "STONE_ISLAND";
   gender: "WOMEN" | "MEN";
   source_url: string;
+  product_code?: string | null;
   title: string;
   description_html?: string | null;
   vendor: string;
@@ -19,6 +20,13 @@ type ProductRow = {
   cost_price_uah?: number | string | null;
   sale_price_uah?: number | string | null;
   compare_at_price_uah?: number | string | null;
+  shopify_product_gid?: string | null;
+  import_status?: string | null;
+  last_error?: string | null;
+  last_seen_at?: string | null;
+  updated_at?: string | null;
+  color?: string | null;
+  composition?: string | null;
   parservo_variants?: Array<{
     size: string;
     sku?: string | null;
@@ -89,7 +97,7 @@ export async function loadSupabaseCatalog(): Promise<SupabaseCatalogResult> {
           size: variant.size,
           sku: variant.sku || null,
           quantity: Number(variant.inventory_qty || 0),
-          available: variant.available !== false,
+          available: variant.available !== false && Number(variant.inventory_qty || 0) > 0,
           position: Number(variant.position || index + 1),
           costPriceUah: numberOrNull(variant.cost_uah),
           salePriceUah: numberOrNull(variant.price_uah),
@@ -115,9 +123,10 @@ export async function loadSupabaseCatalog(): Promise<SupabaseCatalogResult> {
         brand: row.vendor,
         title: row.title,
         sourceUrl: row.source_url,
-        supplierProductId: row.handle,
+        supplierProductId: row.product_code || row.handle,
         price: numberOrNull(row.supplier_price),
         currency: row.supplier_currency || "UAH",
+        color: row.color || null,
         sizes: variants.map((variant) => variant.size),
         variants,
         pricing: {
@@ -128,7 +137,13 @@ export async function loadSupabaseCatalog(): Promise<SupabaseCatalogResult> {
         tags: row.tags || [],
         status: row.status || "draft",
         descriptionHtml: row.description_html || null,
+        composition: row.composition || null,
         media,
+        shopifyProductGid: row.shopify_product_gid || null,
+        importStatus: row.import_status || null,
+        lastError: row.last_error || null,
+        lastSeenAt: row.last_seen_at || null,
+        updatedAt: row.updated_at || null,
       };
     });
 
