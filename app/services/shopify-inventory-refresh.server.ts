@@ -32,6 +32,11 @@ function normalizeSize(value: string | null | undefined) {
   return /^(DEFAULT TITLE|ONE SIZE|OS|UN)$/.test(clean) ? "DEFAULT TITLE" : clean;
 }
 
+function money(value: number | null | undefined) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number.toFixed(2) : "0.00";
+}
+
 async function graphql<T>(admin: AdminClient, query: string, variables: Record<string, unknown>) {
   const response = await admin.graphql(query, { variables });
   const body = await response.json();
@@ -71,6 +76,20 @@ function selectedSize(variant: ShopifyVariant) {
   return normalizeSize(row?.value || "");
 }
 
+function freshPricing(product: ParsedMarketplaceProduct) {
+  const salePriceUah = Number(product.pricing?.salePriceUah || 0);
+  const costPriceUah = Number(product.pricing?.costPriceUah || 0);
+  const compareAtPriceUah = Number(product.pricing?.compareAtPriceUah || 0);
+  return {
+    available: Number.isFinite(salePriceUah) && salePriceUah > 0,
+    salePriceUah,
+    costPriceUah: Number.isFinite(costPriceUah) && costPriceUah > 0 ? costPriceUah : 0,
+    compareAtPriceUah: Number.isFinite(compareAtPriceUah) && compareAtPriceUah > salePriceUah
+      ? compareAtPriceUah
+      : null,
+  };
+}
+
 async function updateStoredInventory(product: ParsedMarketplaceProduct, quantities: Map<string, number>) {
   const handle = handleFor(product);
   const existing = await databaseAdminRequest(
@@ -80,6 +99,7 @@ async function updateStoredInventory(product: ParsedMarketplaceProduct, quantiti
   const capturedBySize = new Map(
     (product.variants || []).map((variant) => [normalizeSize(variant.size), variant]),
   );
+  const pricing = freshPricing(product);
   const now = new Date().toISOString();
   const merged = (Array.isArray(existing) ? existing : []).map((row, index) => {
     const size = normalizeSize(String(row.size || ""));
@@ -92,9 +112,15 @@ async function updateStoredInventory(product: ParsedMarketplaceProduct, quantiti
       size: row.size || (size === "DEFAULT TITLE" ? "Default Title" : size),
       sku: row.sku || captured?.sku || product.supplierProductId || handle,
       inventory_qty: quantity,
-      price_uah: row.price_uah ?? captured?.salePriceUah ?? product.pricing?.salePriceUah ?? 0,
-      compare_at_price_uah: row.compare_at_price_uah ?? captured?.compareAtPriceUah ?? product.pricing?.compareAtPriceUah ?? null,
-      cost_uah: row.cost_uah ?? captured?.costPriceUah ?? product.pricing?.costPriceUah ?? 0,
+      price_uah: pricing.available
+        ? pricing.salePriceUah
+        : row.price_uah ?? captured?.salePriceUah ?? product.pricing?.salePriceUah ?? 0,
+      compare_at_price_uah: pricing.available
+        ? pricing.compareAtPriceUah
+        : row.compare_at_price_uah ?? captured?.compareAtPriceUah ?? product.pricing?.compareAtPriceUah ?? null,
+      cost_uah: pricing.available
+        ? pricing.costPriceUah
+        : row.cost_uah ?? captured?.costPriceUah ?? product.pricing?.costPriceUah ?? 0,
       available: quantity > 0,
       position: Number(row.position || index + 1),
       supplier_status: quantity === 0 ? "SOLD_OUT" : quantity === 1 ? "LOW_STOCK" : "IN_STOCK",
@@ -111,9 +137,9 @@ async function updateStoredInventory(product: ParsedMarketplaceProduct, quantiti
       size: size === "DEFAULT TITLE" ? "Default Title" : variant.size,
       sku: variant.sku || product.supplierProductId || handle,
       inventory_qty: quantity,
-      price_uah: variant.salePriceUah ?? product.pricing?.salePriceUah ?? 0,
-      compare_at_price_uah: variant.compareAtPriceUah ?? product.pricing?.compareAtPriceUah ?? null,
-      cost_uah: variant.costPriceUah ?? product.pricing?.costPriceUah ?? 0,
+      price_uah: pricing.available ? pricing.salePriceUah : variant.salePriceUah ?? product.pricing?.salePriceUah ?? 0,
+      compare_at_price_uah: pricing.available ? pricing.compareAtPriceUah : variant.compareAtPriceUah ?? product.pricing?.compareAtPriceUah ?? null,
+      cost_uah: pricing.available ? pricing.costPriceUah : variant.costPriceUah ?? product.pricing?.costPriceUah ?? 0,
       available: quantity > 0,
       position: merged.length + 1,
       supplier_status: quantity === 0 ? "SOLD_OUT" : quantity === 1 ? "LOW_STOCK" : "IN_STOCK",
@@ -139,11 +165,53 @@ async function updateStoredInventory(product: ParsedMarketplaceProduct, quantiti
     body: JSON.stringify({
       status: total > 0 ? "active" : "draft",
       import_status: total > 0 ? "IMPORTED" : "OUT_OF_STOCK",
+      ...(pricing.available ? {
+        cost_price_uah: pricing.costPriceUah,
+        sale_price_uah: pricing.salePriceUah,
+        compare_at_price_uah: pricing.compareAtPriceUah,
+      } : {}),
       last_seen_at: now,
       updated_at: now,
       last_error: null,
     }),
   });
+}
+
+async function updateShopifyPrices(
+  admin: AdminClient,
+  productId: string,
+  variants: ShopifyVariant[],
+  product: ParsedMarketplaceProduct,
+) {
+  const pricing = freshPricing(product);
+  if (!pricing.available || !variants.length) return 0;
+
+  const result = await graphql<{
+    productVariantsBulkUpdate: {
+      productVariants?: Array<{ id: string }>;
+      userErrors?: UserError[];
+    };
+  }>(
+    admin,
+    `#graphql
+      mutation ParserVoRefreshVariantPrices($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+        productVariantsBulkUpdate(productId: $productId, variants: $variants, allowPartialUpdates: false) {
+          productVariants { id }
+          userErrors { code field message }
+        }
+      }
+    `,
+    {
+      productId,
+      variants: variants.map((variant) => ({
+        id: variant.id,
+        price: money(pricing.salePriceUah),
+        compareAtPrice: pricing.compareAtPriceUah ? money(pricing.compareAtPriceUah) : null,
+      })),
+    },
+  );
+  throwUserErrors("Shopify price update failed", result.productVariantsBulkUpdate.userErrors);
+  return result.productVariantsBulkUpdate.productVariants?.length || 0;
 }
 
 export async function syncStoneIslandInventoryOnly(
@@ -232,6 +300,13 @@ export async function syncStoneIslandInventoryOnly(
     },
   );
   throwUserErrors("Shopify inventory update failed", mutation.inventorySetQuantities.userErrors);
+
+  const updatedPrices = await updateShopifyPrices(
+    admin,
+    shopifyProduct.id,
+    shopifyProduct.variants.nodes,
+    product,
+  );
   await updateStoredInventory(product, storedQuantities);
 
   const totalQuantity = [...storedQuantities.values()].reduce((sum, quantity) => sum + quantity, 0);
@@ -239,6 +314,7 @@ export async function syncStoneIslandInventoryOnly(
     productId: shopifyProduct.id,
     title: shopifyProduct.title,
     updatedVariants: quantities.length,
+    updatedPrices,
     totalQuantity,
     inStockVariants: [...storedQuantities.values()].filter((quantity) => quantity > 0).length,
   };
