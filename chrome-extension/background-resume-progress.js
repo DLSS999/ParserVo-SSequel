@@ -1,4 +1,4 @@
-// ParserVo Stone Island Capture 2.9.8
+// ParserVo Stone Island Capture 2.9.9
 // Persist full-import work queues so a Manifest V3 service-worker restart resumes
 // from the next unprocessed URL instead of starting the same job from zero.
 
@@ -53,6 +53,7 @@ processJob = async function processJobWithPersistentResume(s, job) {
   let cursor = Math.max(0, Math.min(queue.length, Number(state?.cursor || 0)));
   let captured = Math.max(0, Number(state?.captured || 0));
   let failed = Math.max(0, Number(state?.failed || 0));
+  let outOfStock = Math.max(0, Number(state?.outOfStock || 0));
   let pagesDone = Math.max(0, Number(state?.pagesDone || 0));
   let errorMessages = Array.isArray(state?.errors) ? state.errors.slice(0, 50) : [];
   const seen = new Set(queue.map((row) => row.url));
@@ -72,6 +73,7 @@ processJob = async function processJobWithPersistentResume(s, job) {
       processed: cursor,
       captured,
       failed,
+      outOfStock,
       total: queue.length,
     };
     await writeResumeState(job.id, {
@@ -79,6 +81,7 @@ processJob = async function processJobWithPersistentResume(s, job) {
       cursor,
       captured,
       failed,
+      outOfStock,
       pagesDone,
       errors: errorMessages.slice(0, 50),
     });
@@ -109,14 +112,14 @@ processJob = async function processJobWithPersistentResume(s, job) {
           productsTotal: queue.length,
           productsDone: captured,
           productsFailed: failed,
-          message: `Prepared ${queue.length} base products; colour variants will be added during processing`,
-          result: { resume: true, cursor, version: chrome.runtime.getManifest().version },
+          message: `Prepared ${queue.length} base products; imported ${captured}; not in stock ${outOfStock}; errors ${failed}`,
+          result: { resume: true, cursor, outOfStock, version: chrome.runtime.getManifest().version },
         });
       }
     }
   } else {
     setCurrent(`Resuming job ${job.id}: ${cursor}/${queue.length}`);
-    log(`Resuming ${job.id} from ${cursor}/${queue.length}; imported ${captured}; errors ${failed}`);
+    log(`Resuming ${job.id} from ${cursor}/${queue.length}; imported ${captured}; not in stock ${outOfStock}; errors ${failed}`);
     await queueRequest(s, {
       action: "progress",
       jobId: job.id,
@@ -126,14 +129,14 @@ processJob = async function processJobWithPersistentResume(s, job) {
       productsTotal: queue.length,
       productsDone: captured,
       productsFailed: failed,
-      message: `Resumed ${cursor}/${queue.length}; imported ${captured}; errors ${failed}`,
-      result: { resume: true, cursor, version: chrome.runtime.getManifest().version },
+      message: `Resumed ${cursor}/${queue.length}; imported ${captured}; not in stock ${outOfStock}; errors ${failed}`,
+      result: { resume: true, cursor, outOfStock, version: chrome.runtime.getManifest().version },
     });
   }
 
   if (!queue.length) throw new Error("No strict Stone Island product links were found on this catalog page.");
 
-  stats = { processed: cursor, captured, failed, total: queue.length };
+  stats = { processed: cursor, captured, failed, outOfStock, total: queue.length };
 
   while (cursor < queue.length && (limit <= 0 || cursor < limit)) {
     if (stopRequested || !(await jobActive(s, job.id))) {
@@ -144,7 +147,7 @@ processJob = async function processJobWithPersistentResume(s, job) {
     const row = queue[cursor];
     const config = configFor(row.configId);
     if (!config) throw new Error(`Missing Stone Island configuration for ${row.url}`);
-    setCurrent(`Importing ${cursor + 1}/${queue.length}; imported ${captured}; errors ${failed}`);
+    setCurrent(`Importing ${cursor + 1}/${queue.length}; imported ${captured}; not in stock ${outOfStock}; errors ${failed}`);
 
     try {
       const result = await captureProduct(row.url, s, {
@@ -159,7 +162,10 @@ processJob = async function processJobWithPersistentResume(s, job) {
 
       for (const variant of result?.page?.colorVariantUrls || []) addWork(variant.url, config);
 
-      if (result?.ok) {
+      if (result?.ok && result?.skipped && result?.reason === "OUT_OF_STOCK") {
+        outOfStock += 1;
+        log(`Not in stock ${row.url}; queue now ${queue.length}`);
+      } else if (result?.ok) {
         captured += 1;
         log(`Imported ${row.url}; queue now ${queue.length}`);
       } else {
@@ -185,11 +191,12 @@ processJob = async function processJobWithPersistentResume(s, job) {
         productsTotal: queue.length,
         productsDone: captured,
         productsFailed: failed,
-        message: `Processed ${cursor}/${queue.length}; imported ${captured}; errors ${failed}`,
+        message: `Processed ${cursor}/${queue.length}; imported ${captured}; not in stock ${outOfStock}; errors ${failed}`,
         result: {
           resume: true,
           cursor,
           version: chrome.runtime.getManifest().version,
+          outOfStock,
           errors: errorMessages.slice(0, 20),
         },
       }).catch(() => {});
@@ -206,12 +213,13 @@ processJob = async function processJobWithPersistentResume(s, job) {
     productsTotal: finalTotal,
     productsDone: captured,
     productsFailed: failed,
-    message: `Completed ${captured}/${finalTotal}; errors ${failed}; discovered ${queue.length}`,
+    message: `Completed ${cursor}/${finalTotal}; imported ${captured}; not in stock ${outOfStock}; errors ${failed}; discovered ${queue.length}`,
     result: {
       resume: true,
       cursor,
       version: chrome.runtime.getManifest().version,
       discovered: queue.length,
+      outOfStock,
       errors: errorMessages.slice(0, 20),
     },
   });
