@@ -1,7 +1,7 @@
 const DEFAULT_SUPABASE_URL = "https://cuzjuykyelzrvxxbcjry.supabase.co";
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 const RETRY_DELAYS_MS = [250, 750, 1500];
-const MIN_CHROME_CAPTURE_VERSION = "2.9.9";
+const MIN_CHROME_CAPTURE_VERSION = "2.10.0";
 
 export type CrawlJobStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "PARTIAL" | "ERROR" | "CANCELLED";
 
