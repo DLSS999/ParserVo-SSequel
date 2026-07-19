@@ -70,6 +70,7 @@ export default function AppLayout() {
           <nav className="pv-app-nav">
             <Link className={location.pathname === "/app" ? "active" : ""} to="/app">CATALOG</Link>
             <Link className={location.pathname.startsWith("/app/crawler") ? "active" : ""} to="/app/crawler">PARSER / QUEUE</Link>
+            <Link className={location.pathname.startsWith("/app/stock") ? "active" : ""} to="/app/stock">STOCK</Link>
             <Link className={location.pathname.startsWith("/app/colors") ? "active" : ""} to="/app/colors">COLORS</Link>
           </nav>
         </header>
