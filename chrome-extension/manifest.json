@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ParserVo Stone Island Capture",
-  "version": "2.9.9",
-  "description": "Stone Island capture with separate out-of-stock counting, resumable progress, reliable size parsing, transport retries, colour expansion and bulk inventory refresh.",
+  "version": "2.10.0",
+  "description": "Stone Island capture with new-products-only import, existing-product protection, separate out-of-stock counting, resumable progress, colour expansion and bulk inventory refresh.",
   "permissions": ["activeTab", "alarms", "scripting", "storage", "tabs"],
   "host_permissions": [
     "https://*.stoneisland.com/*",
