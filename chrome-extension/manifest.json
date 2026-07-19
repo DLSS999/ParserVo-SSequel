@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ParserVo Stone Island Capture",
-  "version": "2.10.0",
-  "description": "Stone Island capture with new-products-only import, existing-product protection, separate out-of-stock counting, resumable progress, colour expansion and bulk inventory refresh.",
+  "version": "2.10.1",
+  "description": "Stone Island capture with new-products-only import, existing-product protection, frame replacement retries, separate out-of-stock counting, resumable progress, colour expansion and bulk inventory refresh.",
   "permissions": ["activeTab", "alarms", "scripting", "storage", "tabs"],
   "host_permissions": [
     "https://*.stoneisland.com/*",
@@ -12,7 +12,7 @@
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
-  "background": { "service_worker": "background-entry-299.js" },
+  "background": { "service_worker": "background-entry-2101.js" },
   "action": {
     "default_title": "ParserVo Stone Island Capture",
     "default_popup": "popup.html"
