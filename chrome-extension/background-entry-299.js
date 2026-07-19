@@ -1,4 +1,4 @@
-// ParserVo Stone Island Capture 2.9.9
+// ParserVo Stone Island Capture 2.10.0
 importScripts(
   "background-stock.js",
   "background-stop-control.js",
