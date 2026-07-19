@@ -1,7 +1,6 @@
 // ParserVo Stone Island Capture 2.10.0
-// Persist full-import work queues so a Manifest V3 service-worker restart resumes
-// from the next unprocessed URL instead of starting the same job from zero.
-// NEW_ONLY jobs preserve existing Shopify products while still discovering new colours.
+// Resumable imports with NEW_ONLY protection. Existing Shopify products are
+// inspected only to discover additional colour URLs and are never re-imported.
 
 const processJobBeforeResumeProgress = processJob;
 const RESUME_STATE_PREFIX = "parservo-stone-resume:";
@@ -72,14 +71,18 @@ processJob = async function processJobWithPersistentResume(s, job) {
   const configs = Array.isArray(job.configs) ? job.configs : [];
   if (isStockOnlyJob(configs)) return processJobBeforeResumeProgress(s, job);
 
-  const limit = Math.max(0, Number(job.max_products || 0));
+  const requestedLimit = Math.max(0, Number(job.max_products || 0));
+  const newOnlyJob = configs.some(isNewOnlyConfig);
   const configMap = new Map(configs.map((config) => [String(config.id || ""), config]));
   const fallbackConfig = configs[0] || null;
-  let state = await readResumeState(job.id);
+  const state = await readResumeState(job.id);
 
   let queue = Array.isArray(state?.queue)
     ? state.queue
-        .map((row) => ({ url: strictStoneProductUrl(row?.url, row?.url), configId: String(row?.configId || "") }))
+        .map((row) => ({
+          url: strictStoneProductUrl(row?.url, row?.url),
+          configId: String(row?.configId || ""),
+        }))
         .filter((row) => row.url)
     : [];
   let cursor = Math.max(0, Math.min(queue.length, Number(state?.cursor || 0)));
@@ -95,13 +98,13 @@ processJob = async function processJobWithPersistentResume(s, job) {
   const addWork = (url, config) => {
     const normalized = strictStoneProductUrl(url, config?.catalogUrl || config?.baseUrl || url);
     if (!normalized || seen.has(normalized)) return false;
-    if (limit > 0 && queue.length >= limit) return false;
+    if (!newOnlyJob && requestedLimit > 0 && queue.length >= requestedLimit) return false;
     seen.add(normalized);
     queue.push({ url: normalized, configId: String(config?.id || "") });
     return true;
   };
 
-  const processedSuccessfully = () => captured + outOfStock + skippedExisting;
+  const processedSuccessfully = () => captured + skippedExisting + outOfStock;
 
   const persist = async () => {
     stats = {
@@ -124,39 +127,7 @@ processJob = async function processJobWithPersistentResume(s, job) {
     });
   };
 
-  if (!queue.length) {
-    for (const config of configs) {
-      for (const pageUrl of Array.isArray(config.pageUrls) ? config.pageUrls : []) {
-        if (stopRequested || !(await jobActive(s, job.id))) {
-          await persist();
-          return;
-        }
-        const baseLinks = await collectProductLinks(
-          pageUrl,
-          limit,
-          Number(s.loadWaitMs || 4500),
-          Number(config.itemsPerLoad || 16),
-        );
-        for (const link of baseLinks) addWork(link, config);
-        pagesDone += 1;
-        await persist();
-        await queueRequest(s, {
-          action: "progress",
-          jobId: job.id,
-          pagesTotal: configs.length,
-          pagesDone,
-          linksFound: queue.length,
-          productsTotal: queue.length,
-          productsDone: processedSuccessfully(),
-          productsFailed: failed,
-          message: `Prepared ${queue.length} base products; imported ${captured}; existing skipped ${skippedExisting}; not in stock ${outOfStock}; errors ${failed}`,
-          result: { resume: true, cursor, outOfStock, skippedExisting, version: chrome.runtime.getManifest().version },
-        });
-      }
-    }
-  } else {
-    setCurrent(`Resuming job ${job.id}: ${cursor}/${queue.length}`);
-    log(`Resuming ${job.id} from ${cursor}/${queue.length}; imported ${captured}; existing skipped ${skippedExisting}; not in stock ${outOfStock}; errors ${failed}`);
+  const sendProgress = async (message) => {
     await queueRequest(s, {
       action: "progress",
       jobId: job.id,
@@ -166,16 +137,66 @@ processJob = async function processJobWithPersistentResume(s, job) {
       productsTotal: queue.length,
       productsDone: processedSuccessfully(),
       productsFailed: failed,
-      message: `Resumed ${cursor}/${queue.length}; imported ${captured}; existing skipped ${skippedExisting}; not in stock ${outOfStock}; errors ${failed}`,
-      result: { resume: true, cursor, outOfStock, skippedExisting, version: chrome.runtime.getManifest().version },
+      message,
+      result: {
+        resume: true,
+        cursor,
+        outOfStock,
+        skippedExisting,
+        importedNew: captured,
+        version: chrome.runtime.getManifest().version,
+        errors: errorMessages.slice(0, 20),
+      },
     });
+  };
+
+  if (!queue.length) {
+    for (const config of configs) {
+      for (const pageUrl of Array.isArray(config.pageUrls) ? config.pageUrls : []) {
+        if (stopRequested || !(await jobActive(s, job.id))) {
+          await persist();
+          return;
+        }
+
+        // NEW_ONLY must inspect the full supplied catalog. Otherwise old products
+        // at the beginning of the page would consume the requested new-item limit.
+        const collectionLimit = isNewOnlyConfig(config) ? 0 : requestedLimit;
+        const baseLinks = await collectProductLinks(
+          pageUrl,
+          collectionLimit,
+          Number(s.loadWaitMs || 4500),
+          Number(config.itemsPerLoad || 16),
+        );
+        for (const link of baseLinks) addWork(link, config);
+        pagesDone += 1;
+        await persist();
+        await sendProgress(
+          `Prepared ${queue.length} base products; imported new ${captured}; existing skipped ${skippedExisting}; not in stock ${outOfStock}; errors ${failed}`,
+        );
+      }
+    }
+  } else {
+    setCurrent(`Resuming job ${job.id}: ${cursor}/${queue.length}`);
+    log(
+      `Resuming ${job.id} from ${cursor}/${queue.length}; imported new ${captured}; `
+      + `existing skipped ${skippedExisting}; not in stock ${outOfStock}; errors ${failed}`,
+    );
+    await sendProgress(
+      `Resumed ${cursor}/${queue.length}; imported new ${captured}; existing skipped ${skippedExisting}; not in stock ${outOfStock}; errors ${failed}`,
+    );
   }
 
   if (!queue.length) throw new Error("No strict Stone Island product links were found on this catalog page.");
 
-  stats = { processed: cursor, captured, failed, outOfStock, skippedExisting, total: queue.length };
+  const shouldContinue = () => (
+    cursor < queue.length
+    && (
+      requestedLimit <= 0
+      || (newOnlyJob ? captured < requestedLimit : cursor < requestedLimit)
+    )
+  );
 
-  while (cursor < queue.length && (limit <= 0 || cursor < limit)) {
+  while (shouldContinue()) {
     if (stopRequested || !(await jobActive(s, job.id))) {
       await persist();
       return;
@@ -184,16 +205,25 @@ processJob = async function processJobWithPersistentResume(s, job) {
     const row = queue[cursor];
     const config = configFor(row.configId);
     if (!config) throw new Error(`Missing Stone Island configuration for ${row.url}`);
-    setCurrent(`Processing ${cursor + 1}/${queue.length}; imported ${captured}; existing skipped ${skippedExisting}; not in stock ${outOfStock}; errors ${failed}`);
+    setCurrent(
+      `Processing ${cursor + 1}/${queue.length}; imported new ${captured}`
+      + `${requestedLimit > 0 ? `/${requestedLimit}` : ""}; existing skipped ${skippedExisting}; errors ${failed}`,
+    );
 
     try {
       if (isNewOnlyConfig(config)) {
         const existence = await parserVoProductExists(s, row.url);
         if (existence?.exists) {
-          const page = await parserVoDiscoverColourVariantsOnly(row.url, s);
-          for (const variant of page?.colorVariantUrls || []) addWork(variant.url, config);
+          // The existing product itself is never sent to Shopify. We only inspect
+          // its colour selector so a new colour of the same model can still enter the queue.
+          try {
+            const page = await parserVoDiscoverColourVariantsOnly(row.url, s);
+            for (const variant of page?.colorVariantUrls || []) addWork(variant.url, config);
+          } catch (discoveryError) {
+            log(`Existing product colour discovery skipped ${row.url}: ${messageOf(discoveryError)}`);
+          }
           skippedExisting += 1;
-          log(`Existing product skipped without Shopify update ${row.url}; queue now ${queue.length}`);
+          log(`Existing product preserved without update ${row.url}; queue now ${queue.length}`);
         } else {
           const result = await captureProduct(row.url, s, {
             jobId: job.id,
@@ -205,6 +235,7 @@ processJob = async function processJobWithPersistentResume(s, job) {
             defaultQuantity: config.defaultQuantity,
           });
           for (const variant of result?.page?.colorVariantUrls || []) addWork(variant.url, config);
+
           if (result?.ok && result?.skipped && result?.reason === "OUT_OF_STOCK") {
             outOfStock += 1;
             log(`Not in stock ${row.url}; queue now ${queue.length}`);
@@ -229,6 +260,7 @@ processJob = async function processJobWithPersistentResume(s, job) {
           defaultQuantity: config.defaultQuantity,
         });
         for (const variant of result?.page?.colorVariantUrls || []) addWork(variant.url, config);
+
         if (result?.ok && result?.skipped && result?.reason === "OUT_OF_STOCK") {
           outOfStock += 1;
           log(`Not in stock ${row.url}; queue now ${queue.length}`);
@@ -250,44 +282,32 @@ processJob = async function processJobWithPersistentResume(s, job) {
     } finally {
       cursor += 1;
       await persist();
-      await queueRequest(s, {
-        action: "progress",
-        jobId: job.id,
-        pagesTotal: configs.length,
-        pagesDone,
-        linksFound: queue.length,
-        productsTotal: queue.length,
-        productsDone: processedSuccessfully(),
-        productsFailed: failed,
-        message: `Processed ${cursor}/${queue.length}; imported new ${captured}; existing skipped ${skippedExisting}; not in stock ${outOfStock}; errors ${failed}`,
-        result: {
-          resume: true,
-          cursor,
-          version: chrome.runtime.getManifest().version,
-          outOfStock,
-          skippedExisting,
-          errors: errorMessages.slice(0, 20),
-        },
-      }).catch(() => {});
+      await sendProgress(
+        `Processed ${cursor}/${queue.length}; imported new ${captured}`
+        + `${requestedLimit > 0 ? `/${requestedLimit}` : ""}; existing skipped ${skippedExisting}; `
+        + `not in stock ${outOfStock}; errors ${failed}`,
+      ).catch(() => {});
     }
   }
 
-  const finalTotal = Math.min(queue.length, limit > 0 ? limit : queue.length);
   await queueRequest(s, {
     action: "complete",
     jobId: job.id,
     pagesTotal: configs.length,
     pagesDone,
     linksFound: queue.length,
-    productsTotal: finalTotal,
+    productsTotal: queue.length,
     productsDone: processedSuccessfully(),
     productsFailed: failed,
-    message: `Completed ${cursor}/${finalTotal}; imported new ${captured}; existing skipped ${skippedExisting}; not in stock ${outOfStock}; errors ${failed}; discovered ${queue.length}`,
+    message: `Completed: imported new ${captured}`
+      + `${requestedLimit > 0 ? `/${requestedLimit}` : ""}; existing skipped ${skippedExisting}; `
+      + `not in stock ${outOfStock}; errors ${failed}; discovered ${queue.length}`,
     result: {
       resume: true,
       cursor,
       version: chrome.runtime.getManifest().version,
       discovered: queue.length,
+      importedNew: captured,
       outOfStock,
       skippedExisting,
       errors: errorMessages.slice(0, 20),
