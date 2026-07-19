@@ -16,6 +16,7 @@ type StonePayload = {
   plnRate?: number;
   quantity?: number;
   itemsPerLoad?: number;
+  importMode?: "NEW_ONLY" | "FULL_IMPORT";
 };
 
 function stoneIslandConfig(categoryId: string) {
@@ -37,12 +38,14 @@ function stoneIslandConfig(categoryId: string) {
   const itemsPerLoad = Math.max(1, Math.min(200, Math.trunc(Number(payload.itemsPerLoad ?? 16))));
   const gender = /\/women\//i.test(parsed.pathname) ? "WOMEN" : "MEN";
   const category = /\/sales?\//i.test(parsed.pathname) ? "Sale" : "Catalog";
+  const mode = payload.importMode === "FULL_IMPORT" ? "FULL_IMPORT" : "NEW_ONLY";
 
   return {
     id: categoryId,
     source: "STONE_ISLAND",
     gender,
     category,
+    mode,
     baseUrl: payload.url,
     catalogUrl: payload.url,
     currency: "PLN",
